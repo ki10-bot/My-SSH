@@ -1,6 +1,6 @@
 #!/bin/bash
 # RemoteGate Generator — Bash version for Mac (no PowerShell needed)
-# Mirror of generator/New-RemoteGateDeployment.ps1, for macOS/Linux
+# Works on macOS Bash 3.2 (no associative arrays) — fixed for generate_template.command
 # Usage: bash generator/generate.sh [--non-interactive] [--config my-config.json] [--skip-upload] [--output dist/RemoteGate-Final.ps1]
 
 set -euo pipefail
@@ -57,16 +57,17 @@ read_secret() {
       echo ""
       return 1  # empty → no password
     fi
-    # Strength check
-    local issues=()
-    if [[ ${#val} -lt 12 ]]; then issues+=("≥12 Zeichen (du hast ${#val})"); fi
-    if ! [[ "$val" =~ [A-Z] ]]; then issues+=("Großbuchstabe"); fi
-    if ! [[ "$val" =~ [a-z] ]]; then issues+=("Kleinbuchstabe"); fi
-    if ! [[ "$val" =~ [0-9] ]]; then issues+=("Zahl"); fi
-    if ! [[ "$val" =~ [^a-zA-Z0-9] ]]; then issues+=("Sonderzeichen"); fi
-    if [[ "$val" == *"DEIN_PASSWORT"* ]] || [[ "$val" == *"password"* ]]; then issues+=("Zu einfach / Platzhalter"); fi
-    if [[ ${#issues[@]} -gt 0 ]]; then
-      echo -e "\033[33m  ⚠️  Schwach: ${issues[*]}\033[0m"
+    # Strength check — use case statements for Bash 3.2 compat
+    issues=""
+    if [[ ${#val} -lt 12 ]]; then issues="$issues • ≥12 Zeichen (du hast ${#val})"$'\n'; fi
+    case "$val" in *[A-Z]*) ;; *) issues="$issues • Großbuchstabe"$'\n';; esac
+    case "$val" in *[a-z]*) ;; *) issues="$issues • Kleinbuchstabe"$'\n';; esac
+    case "$val" in *[0-9]*) ;; *) issues="$issues • Zahl"$'\n';; esac
+    case "$val" in *[^a-zA-Z0-9]*) ;; *) issues="$issues • Sonderzeichen"$'\n';; esac
+    case "$val" in *"DEIN_PASSWORT"*|*password*) issues="$issues • Zu einfach / Platzhalter"$'\n';; esac
+    if [[ -n "$issues" ]]; then
+      echo -e "\033[33m  ⚠️  Schwach:\033[0m"
+      echo -e "$issues" | sed 's/^/     /'
       read -p "  Trotzdem verwenden? (j/N): " cont
       if [[ "$cont" != "j" && "$cont" != "J" && "$cont" != "y" && "$cont" != "Y" ]]; then continue; fi
     fi
@@ -96,6 +97,19 @@ banner() {
 BANNER
 }
 
+# JSON helper — works without jq/python assoc arrays, Bash 3.2 safe
+json_get() {
+  local file="$1" key="$2"
+  if [[ ! -f "$file" ]]; then echo ""; return; fi
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -c "import json; print(json.load(open('$file')).get('$key', ''))" 2>/dev/null || echo ""
+  elif command -v python >/dev/null 2>&1; then
+    python -c "import json; print(json.load(open('$file')).get('$key', ''))" 2>/dev/null || echo ""
+  else
+    echo ""
+  fi
+}
+
 # === Start ===
 banner
 echo "Repo: $REPO_ROOT"
@@ -105,37 +119,69 @@ if [[ ! -f "$TEMPLATE_PATH" ]]; then
   exit 1
 fi
 
-# Load prefill if config file provided
-declare -A PREFILL
+# Load prefill if config file provided — Bash 3.2 safe (no declare -A)
+CFG_WindowsUser=""
+CFG_WindowsPassword=""
+CFG_YandexVmIp=""
+CFG_YandexVmUser=""
+CFG_YandexVmPort=""
+CFG_ReverseTunnelPort=""
+CFG_YandexBucket=""
+CFG_StatusEndpoint=""
+CFG_HmacSecret=""
+CFG_StatusEnabled=""
+CFG_Hostname=""
+CFG_DeviceId=""
+
 if [[ -n "$CONFIG_FILE" && -f "$CONFIG_FILE" ]]; then
   log_info "Prefill aus $CONFIG_FILE"
-  # Simple JSON parse via python3 or jq
-  if command -v jq &>/dev/null; then
-    for key in WindowsUser WindowsPassword YandexVmIp YandexVmUser YandexVmPort ReverseTunnelPort YandexBucket StatusEndpoint HmacSecret StatusEnabled Hostname DeviceId; do
-      val=$(jq -r ".\"$key\" // empty" "$CONFIG_FILE" 2>/dev/null || true)
-      if [[ -n "$val" && "$val" != "null" ]]; then PREFILL[$key]="$val"; fi
-    done
-  elif command -v python3 &>/dev/null; then
-    while IFS="=" read -r k v; do
-      if [[ -n "$k" && "$k" != "_"* ]]; then PREFILL[$k]="$v"; fi
-    done < <(python3 -c "import json,sys; d=json.load(open('$CONFIG_FILE')); [print(f'{k}={v}') for k,v in d.items() if not k.startswith('_')]" 2>/dev/null || true)
+  if command -v jq >/dev/null 2>&1; then
+    CFG_WindowsUser=$(jq -r '."WindowsUser" // empty' "$CONFIG_FILE" 2>/dev/null || true)
+    CFG_WindowsPassword=$(jq -r '."WindowsPassword" // empty' "$CONFIG_FILE" 2>/dev/null || true)
+    CFG_YandexVmIp=$(jq -r '."YandexVmIp" // empty' "$CONFIG_FILE" 2>/dev/null || true)
+    CFG_YandexVmUser=$(jq -r '."YandexVmUser" // empty' "$CONFIG_FILE" 2>/dev/null || true)
+    CFG_YandexVmPort=$(jq -r '."YandexVmPort" // empty' "$CONFIG_FILE" 2>/dev/null || true)
+    CFG_ReverseTunnelPort=$(jq -r '."ReverseTunnelPort" // empty' "$CONFIG_FILE" 2>/dev/null || true)
+    CFG_YandexBucket=$(jq -r '."YandexBucket" // empty' "$CONFIG_FILE" 2>/dev/null || true)
+    CFG_StatusEndpoint=$(jq -r '."StatusEndpoint" // empty' "$CONFIG_FILE" 2>/dev/null || true)
+    CFG_HmacSecret=$(jq -r '."HmacSecret" // empty' "$CONFIG_FILE" 2>/dev/null || true)
+    CFG_StatusEnabled=$(jq -r '."StatusEnabled" // empty' "$CONFIG_FILE" 2>/dev/null || true)
+    CFG_Hostname=$(jq -r '."Hostname" // empty' "$CONFIG_FILE" 2>/dev/null || true)
+    CFG_DeviceId=$(jq -r '."DeviceId" // empty' "$CONFIG_FILE" 2>/dev/null || true)
+  elif command -v python3 >/dev/null 2>&1; then
+    CFG_WindowsUser=$(json_get "$CONFIG_FILE" "WindowsUser")
+    CFG_WindowsPassword=$(json_get "$CONFIG_FILE" "WindowsPassword")
+    CFG_YandexVmIp=$(json_get "$CONFIG_FILE" "YandexVmIp")
+    CFG_YandexVmUser=$(json_get "$CONFIG_FILE" "YandexVmUser")
+    CFG_YandexVmPort=$(json_get "$CONFIG_FILE" "YandexVmPort")
+    CFG_ReverseTunnelPort=$(json_get "$CONFIG_FILE" "ReverseTunnelPort")
+    CFG_YandexBucket=$(json_get "$CONFIG_FILE" "YandexBucket")
+    CFG_StatusEndpoint=$(json_get "$CONFIG_FILE" "StatusEndpoint")
+    CFG_HmacSecret=$(json_get "$CONFIG_FILE" "HmacSecret")
+    CFG_StatusEnabled=$(json_get "$CONFIG_FILE" "StatusEnabled")
+    CFG_Hostname=$(json_get "$CONFIG_FILE" "Hostname")
+    CFG_DeviceId=$(json_get "$CONFIG_FILE" "DeviceId")
   else
     log_warn "Kein jq/python3 — Prefill übersprungen"
   fi
+  # Clean "null" strings from jq
+  for v in CFG_WindowsUser CFG_WindowsPassword CFG_YandexVmIp CFG_YandexVmUser CFG_YandexVmPort CFG_ReverseTunnelPort CFG_YandexBucket CFG_StatusEndpoint CFG_HmacSecret CFG_StatusEnabled CFG_Hostname CFG_DeviceId; do
+    eval "val=\$$v"
+    if [[ "$val" == "null" ]]; then eval "$v=\"\""; fi
+  done
 fi
 
-# Defaults
-DEFAULT_USER="${PREFILL[WindowsUser]:-${USER:-RemoteUser}}"
-DEFAULT_IP="${PREFILL[YandexVmIp]:-}"
-DEFAULT_VMUSER="${PREFILL[YandexVmUser]:-tunneluser}"
-DEFAULT_VMPORT="${PREFILL[YandexVmPort]:-22}"
-DEFAULT_TUNPORT="${PREFILL[ReverseTunnelPort]:-2222}"
-DEFAULT_BUCKET="${PREFILL[YandexBucket]:-}"
-DEFAULT_HOST="${PREFILL[Hostname]:-$(hostname -s 2>/dev/null || echo "WINDOWS-PC")}"
-DEVICE_ID="${PREFILL[DeviceId]:-$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null || python3 -c "import uuid;print(uuid.uuid4())" 2>/dev/null || echo "REPLACE_WITH_UUID")}"
-STATUS_ENDPOINT="${PREFILL[StatusEndpoint]:-}"
-HMAC_SECRET="${PREFILL[HmacSecret]:-}"
-# Normalize device id trim
+# Defaults — Bash 3.2 safe (no associative array)
+if [[ -n "$CFG_WindowsUser" ]]; then DEFAULT_USER="$CFG_WindowsUser"; else DEFAULT_USER="${USER:-RemoteUser}"; fi
+if [[ -n "$CFG_YandexVmIp" ]]; then DEFAULT_IP="$CFG_YandexVmIp"; else DEFAULT_IP=""; fi
+if [[ -n "$CFG_YandexVmUser" ]]; then DEFAULT_VMUSER="$CFG_YandexVmUser"; else DEFAULT_VMUSER="tunneluser"; fi
+if [[ -n "$CFG_YandexVmPort" ]]; then DEFAULT_VMPORT="$CFG_YandexVmPort"; else DEFAULT_VMPORT="22"; fi
+if [[ -n "$CFG_ReverseTunnelPort" ]]; then DEFAULT_TUNPORT="$CFG_ReverseTunnelPort"; else DEFAULT_TUNPORT="2222"; fi
+if [[ -n "$CFG_YandexBucket" ]]; then DEFAULT_BUCKET="$CFG_YandexBucket"; else DEFAULT_BUCKET=""; fi
+if [[ -n "$CFG_Hostname" ]]; then DEFAULT_HOST="$CFG_Hostname"; else DEFAULT_HOST="$(hostname -s 2>/dev/null || echo "WINDOWS-PC")"; fi
+if [[ -n "$CFG_DeviceId" && "$CFG_DeviceId" != "REPLACE_WITH_UUID" ]]; then DEVICE_ID="$CFG_DeviceId"; else DEVICE_ID="$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null || python3 -c "import uuid;print(uuid.uuid4())" 2>/dev/null || echo "REPLACE_WITH_UUID")"; fi
+if [[ -n "$CFG_StatusEndpoint" ]]; then STATUS_ENDPOINT="$CFG_StatusEndpoint"; else STATUS_ENDPOINT=""; fi
+if [[ -n "$CFG_HmacSecret" ]]; then HMAC_SECRET="$CFG_HmacSecret"; else HMAC_SECRET=""; fi
 DEVICE_ID="$(echo "$DEVICE_ID" | tr -d '[:space:]')"
 
 if [[ "$NON_INTERACTIVE" == "false" ]]; then
@@ -147,7 +193,6 @@ if [[ "$NON_INTERACTIVE" == "false" ]]; then
   WINDOWS_USER=$(read_input "Windows Benutzername" "$DEFAULT_USER")
   echo "Benutzer: $WINDOWS_USER"
 
-  # Password with read -s
   if WINDOWS_PASSWORD=$(read_secret "Festes Passwort für $WINDOWS_USER"); then
     USE_PASSWORD_AUTH=true
     log_ok "Passwort gesetzt (privat, nur im Yandex-Skript)!"
@@ -163,9 +208,9 @@ if [[ "$NON_INTERACTIVE" == "false" ]]; then
   YANDEX_VM_IP=$(read_input "Yandex VM öffentliche IP (z.B. 51.250.12.34, leer=Platzhalter)" "$DEFAULT_IP")
   if [[ -z "$YANDEX_VM_IP" ]]; then YANDEX_VM_IP="DEIN_YANDEX_VM_IP"; fi
   YANDEX_VM_USER=$(read_input "Yandex VM Tunnel Benutzer" "$DEFAULT_VMUSER")
-  tmp=$(read_input "Yandex SSH Port" "$DEFAULT_VMPORT"); [[ "$tmp" =~ ^[0-9]+$ ]] && DEFAULT_VMPORT="$tmp"
+  tmp=$(read_input "Yandex SSH Port" "$DEFAULT_VMPORT"); case "$tmp" in ''|*[!0-9]* ) ;; *) DEFAULT_VMPORT="$tmp";; esac
   YANDEX_VM_PORT="$DEFAULT_VMPORT"
-  tmp=$(read_input "Reverse Tunnel Port auf VM" "$DEFAULT_TUNPORT"); [[ "$tmp" =~ ^[0-9]+$ ]] && DEFAULT_TUNPORT="$tmp"
+  tmp=$(read_input "Reverse Tunnel Port auf VM" "$DEFAULT_TUNPORT"); case "$tmp" in ''|*[!0-9]* ) ;; *) DEFAULT_TUNPORT="$tmp";; esac
   REVERSE_TUNNEL_PORT="$DEFAULT_TUNPORT"
   YANDEX_BUCKET=$(read_input "Yandex Object Storage Bucket (z.B. my-remotegate-bucket, leer=kein Auto-Upload)" "$DEFAULT_BUCKET")
   read -p "Status Endpoint (HTTPS) konfigurieren? (j/N): " ask
@@ -181,17 +226,17 @@ if [[ "$NON_INTERACTIVE" == "false" ]]; then
   HOSTNAME="$DEFAULT_HOST"
 else
   # Non-interactive
-  WINDOWS_USER="${PREFILL[WindowsUser]:-DEIN_BENUTZER}"
-  WINDOWS_PASSWORD="${PREFILL[WindowsPassword]:-DEIN_PASSWORT}"
+  if [[ -n "$CFG_WindowsUser" ]]; then WINDOWS_USER="$CFG_WindowsUser"; else WINDOWS_USER="DEIN_BENUTZER"; fi
+  if [[ -n "$CFG_WindowsPassword" ]]; then WINDOWS_PASSWORD="$CFG_WindowsPassword"; else WINDOWS_PASSWORD="DEIN_PASSWORT"; fi
   if [[ "$WINDOWS_PASSWORD" == "DEIN_PASSWORT" || -z "$WINDOWS_PASSWORD" ]]; then USE_PASSWORD_AUTH=false; else USE_PASSWORD_AUTH=true; fi
-  YANDEX_VM_IP="${PREFILL[YandexVmIp]:-DEIN_YANDEX_VM_IP}"
+  if [[ -n "$CFG_YandexVmIp" ]]; then YANDEX_VM_IP="$CFG_YandexVmIp"; else YANDEX_VM_IP="DEIN_YANDEX_VM_IP"; fi
   YANDEX_VM_USER="$DEFAULT_VMUSER"
   YANDEX_VM_PORT="$DEFAULT_VMPORT"
   REVERSE_TUNNEL_PORT="$DEFAULT_TUNPORT"
   YANDEX_BUCKET="$DEFAULT_BUCKET"
   HOSTNAME="$DEFAULT_HOST"
   STATUS_ENABLED='$false'
-  if [[ "${PREFILL[StatusEndpoint]:-}" != "" ]]; then STATUS_ENDPOINT="${PREFILL[StatusEndpoint]}"; fi
+  if [[ -n "$CFG_StatusEndpoint" ]]; then STATUS_ENDPOINT="$CFG_StatusEndpoint"; fi
   log_info "NonInteractive: User=$WINDOWS_USER IP=$YANDEX_VM_IP PassAuth=$USE_PASSWORD_AUTH"
 fi
 
@@ -201,32 +246,15 @@ if [[ -z "${HMAC_SECRET:-}" ]]; then HMAC_SECRET=""; fi
 
 GENERATION_TIME="$(date '+%Y-%m-%d %H:%M:%S')"
 
-# === Templating via sed ===
+# === Templating ===
 echo ""
 echo -e "\033[32m── Schritt 3: Generiere FINALEN Installer ──\033[0m"
 
 mkdir -p "$(dirname "$OUTPUT_PATH")"
 
-# Read template
-TEMPLATE_CONTENT="$(cat "$TEMPLATE_PATH")"
-
-# Escape for sed: need to handle /, &, \, and for PowerShell also handle quoting
-# For password, we already have escaping in PS template, but we need to escape sed special chars
-escape_sed() {
-  printf '%s' "$1" | sed -e 's/[\/&]/\\&/g' -e 's/\\/\\\\/g'
-}
-
-# Special handling for password: escape PowerShell double-quote context (`", `$ etc.)
-escape_pw() {
-  local pw="$1"
-  # For PowerShell double-quoted string: ` -> ``, " -> `", $ -> `$
-  pw="${pw//\`/\"\`\"}"  # this is tricky — do simpler: use python for escaping
-  printf '%s' "$pw"
-}
-
 # Use python for robust replacement to avoid sed pitfalls with special chars
 python3 << PYEOF
-import pathlib, os
+import pathlib
 template = pathlib.Path("$TEMPLATE_PATH").read_text(encoding="utf-8")
 replacements = {
     "__WINDOWS_USER__": """$WINDOWS_USER""",
@@ -246,7 +274,6 @@ replacements = {
 # Escape password for PowerShell double-quoted string
 pw = replacements["__WINDOWS_PASSWORD__"]
 if pw != "DEIN_PASSWORT":
-    # Escape for PowerShell: backtick, double-quote, dollar
     pw = pw.replace("\`", "\`\`").replace('"', '\`"').replace("\$", "\`\$")
     replacements["__WINDOWS_PASSWORD__"] = pw
 
@@ -254,8 +281,6 @@ out = template
 for k,v in replacements.items():
     out = out.replace(k, v)
 
-# Validate no template placeholders remain (except maybe DEIN_* comments)
-# Check for __.*__ pattern
 import re
 leftovers = re.findall(r'__[A-Z_]+__', out)
 if leftovers:
@@ -278,7 +303,6 @@ echo "DeviceId: $DEVICE_ID"
 
 # Prepare bool for Python cache
 if [[ "$STATUS_ENABLED" == '$true' ]]; then STATUS_ENABLED_PY="True"; else STATUS_ENABLED_PY="False"; fi
-# Save prefill cache without password
 CACHE_PATH="$SCRIPT_DIR/last-generation.json"
 python3 << PYEOF
 import json, pathlib
@@ -311,7 +335,6 @@ else
   echo -e "\033[36mℹ️  Kein Passwort — Key-only (PasswordAuthentication no)\033[0m"
 fi
 
-# === Upload ===
 echo ""
 echo -e "\033[32m── Schritt 4: Upload nach Yandex ──\033[0m"
 if [[ "$SKIP_UPLOAD" == "true" ]]; then
@@ -323,26 +346,21 @@ elif [[ -z "$YANDEX_BUCKET" ]]; then
 else
   log_info "Versuche Upload nach $YANDEX_BUCKET ..."
   UPLOADER_PS="$SCRIPT_DIR/Upload-ToYandex.ps1"
-  UPLOADER_SH="$SCRIPT_DIR/upload-to-yandex.sh"
-  if command -v pwsh &>/dev/null; then
+  if command -v pwsh >/dev/null 2>&1; then
     pwsh -File "$UPLOADER_PS" -FilePath "$OUTPUT_PATH" -Bucket "$YANDEX_BUCKET" || log_warn "Upload via pwsh fehlgeschlagen"
-  elif command -v powershell &>/dev/null; then
+  elif command -v powershell >/dev/null 2>&1; then
     powershell -File "$UPLOADER_PS" -FilePath "$OUTPUT_PATH" -Bucket "$YANDEX_BUCKET" || log_warn "Upload via powershell fehlgeschlagen"
-  elif [[ -f "$UPLOADER_SH" ]]; then
-    bash "$UPLOADER_SH" "$OUTPUT_PATH" "$YANDEX_BUCKET" || log_warn "Upload via bash fehlgeschlagen"
   else
-    # Try yc directly
-    if command -v yc &>/dev/null; then
+    if command -v yc >/dev/null 2>&1; then
       yc storage s3api put-object --bucket "$YANDEX_BUCKET" --key RemoteGate-Final.ps1 --body "$OUTPUT_PATH" && log_ok "Upload via yc erfolgreich"
-    elif command -v aws &>/dev/null; then
+    elif command -v aws >/dev/null 2>&1; then
       aws --endpoint-url https://storage.yandexcloud.net s3 cp "$OUTPUT_PATH" "s3://$YANDEX_BUCKET/RemoteGate-Final.ps1" && log_ok "Upload via aws erfolgreich"
     else
-      log_warn "KeinUploader gefunden (yc/aws/pwsh). Manuell hochladen."
+      log_warn "Kein Uploader gefunden (yc/aws/pwsh). Manuell hochladen."
     fi
   fi
 fi
 
-# === Final output ===
 cat <<EOF
 
 ════════════════════════════════════════════════════════════
@@ -368,14 +386,12 @@ if [[ -n "$YANDEX_BUCKET" ]]; then
 
   Einzeiler: irm $YANDEX_URL -OutFile \$env:TEMP\\RemoteGate-Final.ps1; & \$env:TEMP\\RemoteGate-Final.ps1
 EOF
-  echo -e "\033[33m  ⚠️  Privater Bucket — presigned URL für Download nutzen (siehe Upload log)!\033[0m"
+  echo -e "\033[33m  ⚠️  Privater Bucket — presigned URL für Download nutzen!\033[0m"
 else
   cat <<EOF
   Kein Yandex Bucket — lokal übertragen:
     scp "$OUTPUT_PATH" WINDOWS-PC:/tmp/RemoteGate-Final.ps1
     # Auf Windows als Admin: & C:\\tmp\\RemoteGate-Final.ps1
-
-  Oder: ./generator/Upload-ToYandex.ps1 -FilePath "$OUTPUT_PATH" -Bucket "<bucket>"
 EOF
 fi
 cat <<EOF
@@ -384,6 +400,5 @@ cat <<EOF
 
 EOF
 
-# Clear sensitive
 WINDOWS_PASSWORD=""
 HMAC_SECRET=""
