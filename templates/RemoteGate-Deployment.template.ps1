@@ -62,8 +62,17 @@ $GeneratedConfig = @{
     DeviceId        = "__DEVICE_ID__"              # UUID — auto-generated
     Hostname        = "__HOSTNAME__"               # e.g. "DESKTOP-ABC123"
 
-    # Yandex Object Storage reference (for info, not used at install time)
-    YandexBucket    = "__YANDEX_BUCKET__"          # e.g. "my-remotegate-bucket"
+    # Object Storage reference (for info, not used at install time)
+    # Supports Cloud.ru (s3.cloud.ru) and Yandex (storage.yandexcloud.net) — see CloudProvider
+    YandexBucket    = "__YANDEX_BUCKET__"          # e.g. "my-remotegate-bucket" (alias, backward compat)
+    CloudBucket     = "__CLOUD_BUCKET__"
+    CloudProvider   = "__CLOUD_PROVIDER__"         # cloudru / yandex / cloudflare
+    S3Endpoint      = "__S3_ENDPOINT__"
+
+    # Cloudflare Tunnel (Option A: 0 ₽, no VM needed)
+    CloudflareTunnelToken = "__CLOUDFLARE_TUNNEL_TOKEN__"
+    CloudflareHostname    = "__CLOUDFLARE_HOSTNAME__"
+    CloudflareTunnelName  = "__CLOUDFLARE_TUNNEL_NAME__"
 
     # Wizard metadata
     GenerationTime  = "__GENERATION_TIME__"
@@ -459,8 +468,73 @@ try {
     }
 } catch { Write-InstallLog "Firewall Restrict: $_" "WARN" }
 
-# === Tunnel key & task (from original Configure-Tunnel logic, condensed) ===
-Write-Step "Konfiguriere Reverse-Tunnel"
+# === Cloudflare Tunnel mode (Option A: 0 ₽, no VM) vs Reverse-Tunnel mode ===
+$IsCloudflareMode = $false
+if ($GeneratedConfig.CloudflareTunnelToken -and $GeneratedConfig.CloudflareTunnelToken.Length -gt 20 -and $GeneratedConfig.CloudflareTunnelToken -notmatch "__CLOUDFLARE") {
+    $IsCloudflareMode = $true
+    Write-InstallLog "Cloudflare Tunnel Mode erkannt — Hostname $($GeneratedConfig.CloudflareHostname)"
+    Write-Host "`n  ☁️  Cloudflare Tunnel Modus (kostenlos, keine VM/IP nötig)" -ForegroundColor Cyan
+    Write-Host "     Hostname: $($GeneratedConfig.CloudflareHostname) → localhost:22" -ForegroundColor White
+}
+
+if ($IsCloudflareMode) {
+    # Install cloudflared and tunnel
+    Write-Step "Installiere Cloudflare Tunnel (cloudflared)"
+    $binDir = "$RemoteGateRoot\bin"
+    if (-not (Test-Path $binDir)) { New-Item -ItemType Directory -Path $binDir -Force | Out-Null }
+    $cfExe = "$binDir\cloudflared.exe"
+    if (-not (Test-Path $cfExe)) {
+        Write-Host "  Lade cloudflared.exe herunter..." -ForegroundColor Yellow
+        $cfUrl = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe"
+        try {
+            Invoke-WebRequest -Uri $cfUrl -OutFile $cfExe -UseBasicParsing
+            Write-InstallLog "cloudflared downloaded: $((Get-Item $cfExe).Length) bytes"
+            Write-Host "  ✅ cloudflared.exe gespeichert" -ForegroundColor Green
+        } catch {
+            try {
+                # Fallback BITS
+                Import-Module BitsTransfer -ErrorAction SilentlyContinue
+                Start-BitsTransfer -Source $cfUrl -Destination $cfExe -ErrorAction Stop
+            } catch {
+                Write-InstallLog "cloudflared download fehlgeschlagen: $_" "ERROR"
+                Write-Host "  ❌ Download fehlgeschlagen: $_" -ForegroundColor Red
+                Write-Host "  Manuell: irm $cfUrl -OutFile `"$cfExe`"" -ForegroundColor Yellow
+            }
+        }
+    } else { Write-Host "  cloudflared.exe vorhanden" -ForegroundColor Gray }
+
+    # Install service with token
+    $cfToken = $GeneratedConfig.CloudflareTunnelToken.Trim()
+    $cfName = if ($GeneratedConfig.CloudflareTunnelName) { $GeneratedConfig.CloudflareTunnelName } else { "remotegate-ssh" }
+    Write-Host "  Installiere Tunnel Service (Token Länge $($cfToken.Length))..." -ForegroundColor Yellow
+    # Stop old
+    $oldSvc = Get-Service cloudflared -ErrorAction SilentlyContinue
+    if ($oldSvc) {
+        try { Stop-Service cloudflared -Force -ErrorAction SilentlyContinue; Start-Sleep 1; & $cfExe service uninstall 2>&1 | Out-Null } catch {}
+    }
+    try {
+        $out = & $cfExe service install $cfToken 2>&1 | Out-String
+        Write-InstallLog "cloudflared service install: $out"
+        Write-Host "  $out" -ForegroundColor Gray
+        Start-Sleep 2
+        try { Start-Service cloudflared -ErrorAction Stop; Write-Host "  ✅ cloudflared Service gestartet" -ForegroundColor Green } catch { Write-Host "  ⚠️ Start fehlgeschlagen: $_" -ForegroundColor Yellow }
+        $svcCf = Get-Service cloudflared -ErrorAction SilentlyContinue
+        if ($svcCf) {
+            Write-Host "  Service: $($svcCf.Status) / $($svcCf.StartType)" -ForegroundColor $(if($svcCf.Status -eq "Running"){"Green"}else{"Red"})
+            # Verify tunnel health after 5s
+            Start-Sleep 5
+            try { $info = & $cfExe tunnel info $cfName 2>&1 | Out-String; Write-Host "  Tunnel info: $info" -ForegroundColor DarkGray } catch {}
+        }
+        # Create visible info file
+        $cfInfo = @{ hostname = $GeneratedConfig.CloudflareHostname; tunnelName = $cfName; installedAt = (Get-Date -Format o); serviceStatus = if($svcCf){$svcCf.Status.ToString()}else{"Unknown"} }
+        $cfInfo | ConvertTo-Json | Set-Content -Path "$RemoteGateRoot\config\cloudflare.json" -Encoding UTF8
+    } catch {
+        Write-InstallLog "cloudflared service install: $_" "ERROR"
+        Write-Host "  ❌ Fehler: $_" -ForegroundColor Red
+        Write-Host "  Prüfe Token — hole neuen: Zero Trust → Tunnels → $cfName → Configure → Install" -ForegroundColor Yellow
+    }
+} else {
+Write-Step "Konfiguriere Reverse-Tunnel (klassisch, VM-Modus)"
 $keyPath = "$RemoteGateRoot\keys\tunnel_ed25519"
 $keyPub = "$keyPath.pub"
 if (-not (Test-Path $keyPath)) {
@@ -603,6 +677,7 @@ if ($GeneratedConfig.YandexVmIp -and $GeneratedConfig.YandexVmIp -notmatch "REPL
     Write-Host "`n  Yandex IP Platzhalter — Tunnel startet nicht bis Config gefüllt." -ForegroundColor Yellow
     Write-Host "  Edit: $configDest" -ForegroundColor White
 }
+} # end else (classic tunnel)
 
 # === Verification ===
 Write-Step "Verifiziere Installation"
@@ -619,33 +694,57 @@ try {
 
 # === Summary ===
 Write-Host "`n════════════════════════════════════════════════════════════" -ForegroundColor Cyan
-Write-Host "  ✅ RemoteGate Installation abgeschlossen (Final aus Yandex)" -ForegroundColor Cyan
+if ($IsCloudflareMode) {
+    Write-Host "  ✅ RemoteGate Installation abgeschlossen (Cloudflare Tunnel, 0 ₽)" -ForegroundColor Cyan
+} else {
+    Write-Host "  ✅ RemoteGate Installation abgeschlossen (Final aus Cloud, VM-Modus)" -ForegroundColor Cyan
+}
 Write-Host "════════════════════════════════════════════════════════════" -ForegroundColor Cyan
 Write-Host "  Device ID:    $($GeneratedConfig.DeviceId)" -ForegroundColor White
 Write-Host "  WindowsUser:  $($GeneratedConfig.WindowsUser)" -ForegroundColor White
 Write-Host "  Passwort-Auth: $(if($UsePasswordAuth){"AKTIV — SSH Login mit Passwort möglich"}else{"DEAKTIVIERT — nur Key-Auth (sicherer)"})" -ForegroundColor $(if($UsePasswordAuth){"Yellow"}else{"Gray"})
 Write-Host "  Config:       $configDest" -ForegroundColor White
 Write-Host "  Logs:         $LogFile" -ForegroundColor White
-Write-Host "  Tunnel:       $RemoteGateRoot\logs\tunnel.log" -ForegroundColor White
-Write-Host "  Yandex:       $($GeneratedConfig.YandexVmUser)@$($GeneratedConfig.YandexVmIp):$($GeneratedConfig.YandexVmPort) → 127.0.0.1:$($GeneratedConfig.ReverseTunnelPort)" -ForegroundColor White
-Write-Host "  Task:         $taskPath$taskName (SYSTEM, sichtbar)" -ForegroundColor White
+if ($IsCloudflareMode) {
+    Write-Host "  Cloudflare:   $($GeneratedConfig.CloudflareHostname) → localhost:22 (Tunnel $($GeneratedConfig.CloudflareTunnelName))" -ForegroundColor Green
+    Write-Host "  Tunnel Bin:   $binDir\cloudflared.exe" -ForegroundColor White
+    Write-Host "  Service:      cloudflared (SYSTEM)" -ForegroundColor White
+    Write-Host "  Check:        Get-Service cloudflared; cloudflared tunnel info $($GeneratedConfig.CloudflareTunnelName)" -ForegroundColor White
+} else {
+    Write-Host "  Tunnel:       $RemoteGateRoot\logs\tunnel.log" -ForegroundColor White
+    Write-Host "  Bastion:      $($GeneratedConfig.YandexVmUser)@$($GeneratedConfig.YandexVmIp):$($GeneratedConfig.YandexVmPort) → 127.0.0.1:$($GeneratedConfig.ReverseTunnelPort)" -ForegroundColor White
+    Write-Host "  Task:         $taskPath$taskName (SYSTEM, sichtbar)" -ForegroundColor White
+}
 Write-Host ""
 Write-Host "  Nächste Schritte:" -ForegroundColor Yellow
-if ($UsePasswordAuth) {
-    Write-Host "    1. Teste Passwort-Login: ssh $($GeneratedConfig.WindowsUser)@<WINDOWS_IP> (lokal) oder" -ForegroundColor White
-    Write-Host "       ssh -J $($GeneratedConfig.YandexVmUser)@$($GeneratedConfig.YandexVmIp) -p $($GeneratedConfig.ReverseTunnelPort) $($GeneratedConfig.WindowsUser)@127.0.0.1" -ForegroundColor White
-    Write-Host "       Passwort: (dein festgelegtes DEIN_PASSWORT)" -ForegroundColor White
+if ($IsCloudflareMode) {
+    Write-Host "    1. Cloudflare Dashboard → Zero Trust → Tunnels → $($GeneratedConfig.CloudflareTunnelName) sollte Healthy (grün) sein" -ForegroundColor White
+    Write-Host "    2. Mac: brew install cloudflared, dann:" -ForegroundColor White
+    Write-Host "       cloudflared access ssh --hostname $($GeneratedConfig.CloudflareHostname)" -ForegroundColor White
+    Write-Host "       oder: ssh -o ProxyCommand=`"cloudflared access ssh --hostname %h`" $($GeneratedConfig.WindowsUser)@$($GeneratedConfig.CloudflareHostname)" -ForegroundColor White
+    Write-Host "    3. Oder direkt: ssh $($GeneratedConfig.WindowsUser)@$($GeneratedConfig.CloudflareHostname) (mit Tunnel SSH)" -ForegroundColor White
+} else {
+    if ($UsePasswordAuth) {
+        Write-Host "    1. Teste Passwort-Login: ssh $($GeneratedConfig.WindowsUser)@<WINDOWS_IP> (lokal) oder" -ForegroundColor White
+        Write-Host "       ssh -J $($GeneratedConfig.YandexVmUser)@$($GeneratedConfig.YandexVmIp) -p $($GeneratedConfig.ReverseTunnelPort) $($GeneratedConfig.WindowsUser)@127.0.0.1" -ForegroundColor White
+        Write-Host "       Passwort: (dein festgelegtes DEIN_PASSWORT)" -ForegroundColor White
+    }
+    Write-Host "    2. Tunnel Key zu VM hinzufügen:" -ForegroundColor White
+    Write-Host "       cat $keyPub | ssh $($GeneratedConfig.YandexVmUser)@$($GeneratedConfig.YandexVmIp) 'cat >> ~/.ssh/authorized_keys'" -ForegroundColor DarkGray
+    Write-Host "    3. Mac: ssh -J rgadmin@$($GeneratedConfig.YandexVmIp) -p $($GeneratedConfig.ReverseTunnelPort) $($GeneratedConfig.WindowsUser)@127.0.0.1" -ForegroundColor White
 }
-Write-Host "    2. Tunnel Key zu Yandex VM hinzufügen:" -ForegroundColor White
-Write-Host "       cat $keyPub | ssh $($GeneratedConfig.YandexVmUser)@$($GeneratedConfig.YandexVmIp) 'cat >> ~/.ssh/authorized_keys'" -ForegroundColor DarkGray
-Write-Host "    3. Mac verbinden: ssh -J rgadmin@$($GeneratedConfig.YandexVmIp) -p $($GeneratedConfig.ReverseTunnelPort) $($GeneratedConfig.WindowsUser)@127.0.0.1" -ForegroundColor White
-Write-Host "    4. Deinstallation: Uninstall-RemoteGate.ps1 (liegt im Repo)" -ForegroundColor DarkGray
+Write-Host "    4. Deinstallation: Uninstall-RemoteGate.ps1" -ForegroundColor DarkGray
 Write-Host "════════════════════════════════════════════════════════════" -ForegroundColor Cyan
-Write-Host "  ⚠️  Dieses Skript kam aus deinem privaten Yandex Bucket ($($GeneratedConfig.YandexBucket))" -ForegroundColor DarkGray
-Write-Host "     — nicht aus GitHub. Bewahre Bucket-Zugriff privat!" -ForegroundColor DarkGray
+if ($IsCloudflareMode) {
+    Write-Host "  ☁️  Dieses Skript kam aus deinem privaten Bucket ($($GeneratedConfig.YandexBucket)) auf $($GeneratedConfig.CloudProvider)" -ForegroundColor DarkGray
+    Write-Host "     Tunnel läuft über Cloudflare (gratis), nicht über bezahlte VM!" -ForegroundColor DarkGray
+} else {
+    Write-Host "  ⚠️  Dieses Skript kam aus deinem privaten Bucket ($($GeneratedConfig.YandexBucket))" -ForegroundColor DarkGray
+    Write-Host "     — nicht aus GitHub. Bewahre Bucket-Zugriff privat!" -ForegroundColor DarkGray
+}
 Write-Host ""
 
-Write-InstallLog "Final installation completed (Yandex-hosted) Device=$($GeneratedConfig.DeviceId)"
+Write-InstallLog "Final installation completed (mode=$(if($IsCloudflareMode){"cloudflare"}else{"bastion"})) Device=$($GeneratedConfig.DeviceId)"
 
 # Clear any residual password from variable (best effort)
 try { Remove-Variable -Name GeneratedConfig -ErrorAction SilentlyContinue } catch {}

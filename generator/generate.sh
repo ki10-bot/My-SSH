@@ -129,6 +129,9 @@ CFG_ReverseTunnelPort=""
 CFG_YandexBucket=""
 CFG_CloudProvider=""
 CFG_CloudEndpoint=""
+CFG_CloudflareTunnelToken=""
+CFG_CloudflareHostname=""
+CFG_CloudflareTunnelName=""
 CFG_StatusEndpoint=""
 CFG_HmacSecret=""
 CFG_StatusEnabled=""
@@ -147,6 +150,9 @@ if [[ -n "$CONFIG_FILE" && -f "$CONFIG_FILE" ]]; then
     CFG_YandexBucket=$(jq -r '."YandexBucket" // empty' "$CONFIG_FILE" 2>/dev/null || true)
     CFG_CloudProvider=$(jq -r '."CloudProvider" // .CloudBucket // empty' "$CONFIG_FILE" 2>/dev/null || true)
     CFG_CloudEndpoint=$(jq -r '."CloudEndpoint" // .S3Endpoint // empty' "$CONFIG_FILE" 2>/dev/null || true)
+    CFG_CloudflareTunnelToken=$(jq -r '."CloudflareTunnelToken" // empty' "$CONFIG_FILE" 2>/dev/null || true)
+    CFG_CloudflareHostname=$(jq -r '."CloudflareHostname" // empty' "$CONFIG_FILE" 2>/dev/null || true)
+    CFG_CloudflareTunnelName=$(jq -r '."CloudflareTunnelName" // empty' "$CONFIG_FILE" 2>/dev/null || true)
     CFG_StatusEndpoint=$(jq -r '."StatusEndpoint" // empty' "$CONFIG_FILE" 2>/dev/null || true)
     CFG_HmacSecret=$(jq -r '."HmacSecret" // empty' "$CONFIG_FILE" 2>/dev/null || true)
     CFG_StatusEnabled=$(jq -r '."StatusEnabled" // empty' "$CONFIG_FILE" 2>/dev/null || true)
@@ -162,6 +168,9 @@ if [[ -n "$CONFIG_FILE" && -f "$CONFIG_FILE" ]]; then
     CFG_YandexBucket=$(json_get "$CONFIG_FILE" "YandexBucket")
     CFG_CloudProvider=$(json_get "$CONFIG_FILE" "CloudProvider")
     CFG_CloudEndpoint=$(json_get "$CONFIG_FILE" "CloudEndpoint")
+    CFG_CloudflareTunnelToken=$(json_get "$CONFIG_FILE" "CloudflareTunnelToken")
+    CFG_CloudflareHostname=$(json_get "$CONFIG_FILE" "CloudflareHostname")
+    CFG_CloudflareTunnelName=$(json_get "$CONFIG_FILE" "CloudflareTunnelName")
     CFG_StatusEndpoint=$(json_get "$CONFIG_FILE" "StatusEndpoint")
     CFG_HmacSecret=$(json_get "$CONFIG_FILE" "HmacSecret")
     CFG_StatusEnabled=$(json_get "$CONFIG_FILE" "StatusEnabled")
@@ -171,7 +180,7 @@ if [[ -n "$CONFIG_FILE" && -f "$CONFIG_FILE" ]]; then
     log_warn "Kein jq/python3 — Prefill übersprungen"
   fi
   # Clean "null" strings from jq
-  for v in CFG_WindowsUser CFG_WindowsPassword CFG_YandexVmIp CFG_YandexVmUser CFG_YandexVmPort CFG_ReverseTunnelPort CFG_YandexBucket CFG_CloudProvider CFG_CloudEndpoint CFG_StatusEndpoint CFG_HmacSecret CFG_StatusEnabled CFG_Hostname CFG_DeviceId; do
+  for v in CFG_WindowsUser CFG_WindowsPassword CFG_YandexVmIp CFG_YandexVmUser CFG_YandexVmPort CFG_ReverseTunnelPort CFG_YandexBucket CFG_CloudProvider CFG_CloudEndpoint CFG_CloudflareTunnelToken CFG_CloudflareHostname CFG_CloudflareTunnelName CFG_StatusEndpoint CFG_HmacSecret CFG_StatusEnabled CFG_Hostname CFG_DeviceId; do
     eval "val=\$$v"
     if [[ "$val" == "null" ]]; then eval "$v=\"\""; fi
   done
@@ -220,28 +229,53 @@ if [[ "$NON_INTERACTIVE" == "false" ]]; then
   fi
 
   echo ""
-  echo -e "\033[32m── Schritt 2: Cloud Zugang (Cloud.ru Free Tier) ──\033[0m"
-  echo -e "\033[36m  Cloud.ru: Free Tier VM 2vCPU/4GB + 15GB S3 gratis, nur IP ~146 ₽/Mo\033[0m"
-  # Cloud provider choice
-  echo "  Anbieter: [1] Cloud.ru (https://s3.cloud.ru, Free Tier) [2] Yandex (https://storage.yandexcloud.net)"
-  prov=$(read_input "  Wähle Anbieter [1/2, Enter=Cloud.ru]" "$DEFAULT_PROVIDER")
+  echo -e "\033[32m── Schritt 2: Verbindung — wähle kostenlose Option ──\033[0m"
+  echo -e "\033[36m  [1] Cloudflare Tunnel (0 ₽, empfohlen, keine VM/IP nötig) — docs/CLOUDFLARE-TUNNEL-GUIDE.md\033[0m"
+  echo -e "\033[33m  [2] Cloud.ru VM (gratis VM, aber IP ~149 ₽/Mo) — alt\033[0m"
+  echo -e "\033[33m  [3] Yandex VM (~500 ₽/Mo) — alt\033[0m"
+  echo "  Wähle: [1/2/3, Enter=1 Cloudflare Tunnel]"
+  prov=$(read_input "  Anbieter" "${DEFAULT_PROVIDER:-cloudflare}")
+  # Normalize: default to cloudflare
   case "$prov" in
-    2|yandex|Yandex) CLOUD_PROVIDER="yandex"; CLOUD_ENDPOINT="https://storage.yandexcloud.net" ;;
-    *) CLOUD_PROVIDER="cloudru"; CLOUD_ENDPOINT="https://s3.cloud.ru" ;;
+    1|cloudflare|Cloudflare|"") CLOUD_PROVIDER="cloudflare"; CLOUD_ENDPOINT="https://s3.cloud.ru" ;;
+    2|cloudru|cloud.ru) CLOUD_PROVIDER="cloudru"; CLOUD_ENDPOINT="https://s3.cloud.ru" ;;
+    3|yandex|Yandex) CLOUD_PROVIDER="yandex"; CLOUD_ENDPOINT="https://storage.yandexcloud.net" ;;
+    *) CLOUD_PROVIDER="cloudflare"; CLOUD_ENDPOINT="https://s3.cloud.ru" ;;
   esac
-  # Also allow custom endpoint
-  if [[ "$CLOUD_PROVIDER" == "cloudru" ]]; then CLOUD_ENDPOINT="https://s3.cloud.ru"; else CLOUD_ENDPOINT="https://storage.yandexcloud.net"; fi
-  log_info "Anbieter: $CLOUD_PROVIDER → $CLOUD_ENDPOINT"
 
-  if [[ -z "$DEFAULT_IP" || "$DEFAULT_IP" == "null" ]]; then DEFAULT_IP=""; fi
-  YANDEX_VM_IP=$(read_input "Cloud VM öffentliche IP (z.B. 51.250.12.34, leer=Platzhalter)" "$DEFAULT_IP")
-  if [[ -z "$YANDEX_VM_IP" ]]; then YANDEX_VM_IP="DEIN_YANDEX_VM_IP"; fi
-  YANDEX_VM_USER=$(read_input "Cloud VM Tunnel Benutzer" "$DEFAULT_VMUSER")
-  tmp=$(read_input "Cloud SSH Port" "$DEFAULT_VMPORT"); case "$tmp" in ''|*[!0-9]* ) ;; *) DEFAULT_VMPORT="$tmp";; esac
-  YANDEX_VM_PORT="$DEFAULT_VMPORT"
-  tmp=$(read_input "Reverse Tunnel Port auf VM" "$DEFAULT_TUNPORT"); case "$tmp" in ''|*[!0-9]* ) ;; *) DEFAULT_TUNPORT="$tmp";; esac
-  REVERSE_TUNNEL_PORT="$DEFAULT_TUNPORT"
-  YANDEX_BUCKET=$(read_input "Object Storage Bucket für Final-Skript (z.B. my-remotegate-bucket, leer=kein Auto-Upload) — $CLOUD_PROVIDER" "$DEFAULT_BUCKET")
+  # Cloudflare mode: ask Tunnel Token + Hostname + Bucket, no VM IP
+  if [[ "$CLOUD_PROVIDER" == "cloudflare" ]]; then
+    log_info "Anbieter: Cloudflare Tunnel (0 ₽, keine VM) → S3 $CLOUD_ENDPOINT"
+    echo -e "\033[36m  ℹ️  Cloudflare braucht: Token (eyJh...) + Hostname (ssh.deinedomain.ru)\033[0m"
+    echo "  Siehe docs/CLOUDFLARE-TUNNEL-GUIDE.md → Schritt 3 (Zero Trust → Tunnels → Create → Token)"
+    echo -n "  Cloudflare Tunnel Token (eyJh..., verdeckt, leer=Platzhalter): "
+    read -s CLOUDFLARE_TUNNEL_TOKEN; echo
+    if [[ -z "$CLOUDFLARE_TUNNEL_TOKEN" ]]; then CLOUDFLARE_TUNNEL_TOKEN="DEIN_CLOUDFLARE_TOKEN"; fi
+    CLOUDFLARE_HOSTNAME=$(read_input "  Public Hostname (z.B. ssh.deinedomain.ru, leer=Platzhalter)" "")
+    if [[ -z "$CLOUDFLARE_HOSTNAME" ]]; then CLOUDFLARE_HOSTNAME="DEIN_HOSTNAME"; fi
+    CLOUDFLARE_TUNNEL_NAME=$(read_input "  Tunnel Name" "remotegate-ssh")
+    YANDEX_BUCKET=$(read_input "  Object Storage Bucket für Final-Skript (Cloud.ru S3, z.B. remotegate-ki10-2026, leer=kein Auto-Upload)" "$DEFAULT_BUCKET")
+    # Dummy VM values unused in cloudflare mode
+    YANDEX_VM_IP="CLOUDFLARE_MODE"
+    YANDEX_VM_USER="cloudflare"
+    YANDEX_VM_PORT=22
+    REVERSE_TUNNEL_PORT=2222
+    log_ok "Cloudflare Modus: $CLOUDFLARE_TUNNEL_NAME → $CLOUDFLARE_HOSTNAME"
+  else
+    log_info "Anbieter: $CLOUD_PROVIDER → $CLOUD_ENDPOINT"
+    if [[ -z "$DEFAULT_IP" || "$DEFAULT_IP" == "null" ]]; then DEFAULT_IP=""; fi
+    YANDEX_VM_IP=$(read_input "  VM öffentliche IP (z.B. 51.250.12.34, leer=Platzhalter)" "$DEFAULT_IP")
+    if [[ -z "$YANDEX_VM_IP" ]]; then YANDEX_VM_IP="DEIN_YANDEX_VM_IP"; fi
+    YANDEX_VM_USER=$(read_input "  VM Tunnel Benutzer" "$DEFAULT_VMUSER")
+    tmp=$(read_input "  VM SSH Port" "$DEFAULT_VMPORT"); case "$tmp" in ''|*[!0-9]* ) ;; *) DEFAULT_VMPORT="$tmp";; esac
+    YANDEX_VM_PORT="$DEFAULT_VMPORT"
+    tmp=$(read_input "  Reverse Tunnel Port auf VM" "$DEFAULT_TUNPORT"); case "$tmp" in ''|*[!0-9]* ) ;; *) DEFAULT_TUNPORT="$tmp";; esac
+    REVERSE_TUNNEL_PORT="$DEFAULT_TUNPORT"
+    YANDEX_BUCKET=$(read_input "  Object Storage Bucket für Final-Skript (z.B. my-remotegate-bucket, leer=kein Auto-Upload) — $CLOUD_PROVIDER" "$DEFAULT_BUCKET")
+    CLOUDFLARE_TUNNEL_TOKEN="DEIN_CLOUDFLARE_TOKEN"
+    CLOUDFLARE_HOSTNAME="DEIN_HOSTNAME"
+    CLOUDFLARE_TUNNEL_NAME="remotegate-ssh"
+  fi
   read -p "Status Endpoint (HTTPS) konfigurieren? (j/N): " ask
   if [[ "$ask" == "j" || "$ask" == "J" || "$ask" == "y" ]]; then
     STATUS_ENDPOINT=$(read_input "Status Endpoint URL" "$STATUS_ENDPOINT")
@@ -263,15 +297,22 @@ else
   YANDEX_VM_PORT="$DEFAULT_VMPORT"
   REVERSE_TUNNEL_PORT="$DEFAULT_TUNPORT"
   YANDEX_BUCKET="$DEFAULT_BUCKET"
-  CLOUD_PROVIDER="${DEFAULT_PROVIDER:-cloudru}"
+  # Cloudflare fields for non-interactive
+  CLOUDFLARE_TUNNEL_TOKEN="${CFG_CloudflareTunnelToken:-DEIN_CLOUDFLARE_TOKEN}"
+  CLOUDFLARE_HOSTNAME="${CFG_CloudflareHostname:-DEIN_HOSTNAME}"
+  CLOUDFLARE_TUNNEL_NAME="${CFG_CloudflareTunnelName:-remotegate-ssh}"
+  if [[ -n "$CFG_CloudflareHostname" ]]; then CLOUDFLARE_HOSTNAME="$CFG_CloudflareHostname"; fi
+  if [[ -n "$CFG_CloudflareTunnelToken" ]]; then CLOUDFLARE_TUNNEL_TOKEN="$CFG_CloudflareTunnelToken"; fi
+  CLOUD_PROVIDER="${DEFAULT_PROVIDER:-cloudflare}"
   CLOUD_ENDPOINT="${DEFAULT_ENDPOINT:-https://s3.cloud.ru}"
-  # Override if config had explicit cloud endpoint
   if [[ -n "$CFG_CloudProvider" ]]; then CLOUD_PROVIDER="$CFG_CloudProvider"; fi
   if [[ -n "$CFG_CloudEndpoint" ]]; then CLOUD_ENDPOINT="$CFG_CloudEndpoint"; fi
+  # If Cloudflare token present, force provider cloudflare
+  if [[ "$CLOUDFLARE_TUNNEL_TOKEN" != "DEIN_CLOUDFLARE_TOKEN" && -n "$CLOUDFLARE_TUNNEL_TOKEN" ]]; then CLOUD_PROVIDER="cloudflare"; YANDEX_VM_IP="CLOUDFLARE_MODE"; fi
   HOSTNAME="$DEFAULT_HOST"
   STATUS_ENABLED='$false'
   if [[ -n "$CFG_StatusEndpoint" ]]; then STATUS_ENDPOINT="$CFG_StatusEndpoint"; fi
-  log_info "NonInteractive: User=$WINDOWS_USER IP=$YANDEX_VM_IP Bucket=$YANDEX_BUCKET Provider=$CLOUD_PROVIDER PassAuth=$USE_PASSWORD_AUTH"
+  log_info "NonInteractive: User=$WINDOWS_USER IP=$YANDEX_VM_IP Bucket=$YANDEX_BUCKET Provider=$CLOUD_PROVIDER Hostname=$CLOUDFLARE_HOSTNAME PassAuth=$USE_PASSWORD_AUTH"
 fi
 
 if [[ -z "${YANDEX_BUCKET:-}" ]]; then YANDEX_BUCKET=""; fi
@@ -303,6 +344,12 @@ replacements = {
     "__DEVICE_ID__": """$DEVICE_ID""",
     "__HOSTNAME__": """$HOSTNAME""",
     "__YANDEX_BUCKET__": """$YANDEX_BUCKET""",
+    "__CLOUD_BUCKET__": """$YANDEX_BUCKET""",
+    "__CLOUD_PROVIDER__": """$CLOUD_PROVIDER""",
+    "__S3_ENDPOINT__": """$CLOUD_ENDPOINT""",
+    "__CLOUDFLARE_TUNNEL_TOKEN__": """$CLOUDFLARE_TUNNEL_TOKEN""",
+    "__CLOUDFLARE_HOSTNAME__": """$CLOUDFLARE_HOSTNAME""",
+    "__CLOUDFLARE_TUNNEL_NAME__": """$CLOUDFLARE_TUNNEL_NAME""",
     "__GENERATION_TIME__": """$GENERATION_TIME""",
 }
 # Escape password for PowerShell double-quoted string

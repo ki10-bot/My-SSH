@@ -19,7 +19,7 @@
 > ```bash
 > git clone https://github.com/ki10-bot/My-SSH.git && cd My-SSH
 > open generate_template.command  # Mac Finder — oder Doppelklick
-> # → Wizard: Passwort setzen → Cloud.ru (Free Tier) → FINAL aus Cloud.ru S3
+> # → Wizard [1] Cloudflare → Token+Hostname → FINAL aus S3 → Windows cloudflared
 > ```
 
 ## What RemoteGate is

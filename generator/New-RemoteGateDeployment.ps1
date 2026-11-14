@@ -207,44 +207,92 @@ if (-not $NonInteractive) {
         break
     }
 
-    Write-Host "`n── Schritt 2: Yandex Zugang (oder später) ──" -ForegroundColor Green
-    Write-Host "Gib Yandex VM Daten ein, oder lasse leer für späteren Upload." -ForegroundColor DarkGray
+    Write-Host "`n── Schritt 2: Verbindung (Tunnel) — wähle kostenlose Option ──" -ForegroundColor Green
+    Write-Host "  [1] Cloudflare Tunnel (0 ₽, empfohlen, keine VM/IP nötig) — siehe docs/CLOUDFLARE-TUNNEL-GUIDE.md" -ForegroundColor Cyan
+    Write-Host "  [2] Cloud.ru VM (gratis VM, aber Public IP ~149 ₽/Mo) — alt" -ForegroundColor DarkGray
+    Write-Host "  [3] Yandex VM (~500 ₽/Mo) — alt" -ForegroundColor DarkGray
+    $choice = Read-Host "  Wähle Anbieter [1/2/3, Enter=1 Cloudflare Tunnel]"
+    if (-not $choice) { $choice = "1" }
 
-    $defaultIp = if ($prefill.YandexVmIp) { $prefill.YandexVmIp } else { "" }
-    $promptIp = if ($defaultIp) { "Yandex VM öffentliche IP [$defaultIp]" } else { "Yandex VM öffentliche IP (z.B. 51.250.12.34, leer = Platzhalter)" }
-    $inputIp = Read-Host $promptIp
-    $YandexVmIp = if ($inputIp) { $inputIp } elseif ($defaultIp) { $defaultIp } else { "DEIN_YANDEX_VM_IP" }
-
-    $defaultVmUser = if ($prefill.YandexVmUser) { $prefill.YandexVmUser } else { "tunneluser" }
-    $inputVmUser = Read-Host "Yandex VM Tunnel Benutzer [$defaultVmUser]"
-    $YandexVmUser = if ($inputVmUser) { $inputVmUser } else { $defaultVmUser }
-
-    $inputPort = Read-Host "Yandex SSH Port [$YandexVmPort]"
-    if ($inputPort -and $inputPort -match "^\d+$") { $YandexVmPort = [int]$inputPort }
-
-    $inputTunPort = Read-Host "Reverse Tunnel Port auf VM [$ReverseTunnelPort]"
-    if ($inputTunPort -and $inputTunPort -match "^\d+$") { $ReverseTunnelPort = [int]$inputTunPort }
-
-    # Cloud provider choice (default Cloud.ru)
+    # Default bucket/cloud endpoint (for S3 hosting of Final)
     $defaultEndpoint = if ($prefill.CloudEndpoint) { $prefill.CloudEndpoint } elseif ($prefill.S3Endpoint) { $prefill.S3Endpoint } else { "https://s3.cloud.ru" }
-    $inputEndpoint = Read-Host "Cloud Anbieter? [1] Cloud.ru (Free Tier, https://s3.cloud.ru) [2] Yandex (https://storage.yandexcloud.net) [1/2, Enter=Cloud.ru]"
-    if ($inputEndpoint -eq "2" -or $inputEndpoint -match "yandex") {
+    $CloudflareTunnelToken = ""
+    $CloudflareHostname = ""
+    $CloudflareTunnelName = "remotegate-ssh"
+
+    if ($choice -eq "1" -or $choice -match "cloudflare") {
+        $CloudProvider = "cloudflare"
+        $CloudEndpoint = "https://s3.cloud.ru" # Final still on Cloud.ru S3 free for file hosting
+        Write-WizardLog "Anbieter: Cloudflare Tunnel (0 ₽, keine VM) → S3 $CloudEndpoint" "PASS"
+        Write-Host ""
+        Write-Host "  ℹ️  Cloudflare Tunnel braucht: Token (eyJh...) + Hostname (ssh.deinedomain.ru)" -ForegroundColor Cyan
+        Write-Host "  Siehe: docs/CLOUDFLARE-TUNNEL-GUIDE.md → Schritt 3 (Zero Trust → Tunnels → Create → Token)" -ForegroundColor DarkGray
+
+        # Ask for Cloudflare specifics
+        $prefToken = if ($prefill.CloudflareTunnelToken) { $prefill.CloudflareTunnelToken } else { "" }
+        $tokenPrompt = if ($prefToken) { "Cloudflare Tunnel Token [vorhanden, Enter behält, sonst neu eingeben]" } else { "Cloudflare Tunnel Token (eyJh... aus Dashboard → Tunnels → Install, leer = Platzhalter)" }
+        $inputToken = Read-SecureInput -Prompt $tokenPrompt -AllowEmpty
+        if ($inputToken) { $CloudflareTunnelToken = $inputToken } elseif ($prefToken) { $CloudflareTunnelToken = $prefToken } else { $CloudflareTunnelToken = "DEIN_CLOUDFLARE_TOKEN" }
+
+        $prefHost = if ($prefill.CloudflareHostname) { $prefill.CloudflareHostname } else { "" }
+        $hostPrompt = if ($prefHost) { "Public Hostname [$prefHost] (z.B. ssh.deinedomain.ru)" } else { "Public Hostname (z.B. ssh.deinedomain.ru, leer = Platzhalter)" }
+        $inputHost = Read-Host $hostPrompt
+        if ($inputHost) { $CloudflareHostname = $inputHost } elseif ($prefHost) { $CloudflareHostname = $prefHost } else { $CloudflareHostname = "DEIN_HOSTNAME" }
+
+        $prefName = if ($prefill.CloudflareTunnelName) { $prefill.CloudflareTunnelName } else { "remotegate-ssh" }
+        $inputName = Read-Host "Tunnel Name [$prefName]"
+        $CloudflareTunnelName = if ($inputName) { $inputName } else { $prefName }
+
+        # Still need S3 bucket for Final hosting (Cloud.ru free)
+        $defaultBucket = if ($prefill.YandexBucket) { $prefill.YandexBucket } elseif ($prefill.CloudBucket) { $prefill.CloudBucket } else { "" }
+        $inputBucket = Read-Host "Object Storage Bucket für Final-Skript (Cloud.ru S3, z.B. remotegate-ki10-2026, leer = kein Auto-Upload)"
+        $YandexBucket = if ($inputBucket) { $inputBucket } elseif ($defaultBucket) { $defaultBucket } else { "" }
+        if ($YandexBucket) { Write-WizardLog "Bucket: $YandexBucket (Cloudflare → S3 $CloudEndpoint)" }
+
+        # Set dummy VM values for template (not used in cloudflare mode)
+        $YandexVmIp = "CLOUDFLARE_MODE"
+        $YandexVmUser = "cloudflare"
+        $YandexVmPort = 22
+        $ReverseTunnelPort = 2222
+        Write-WizardLog "Cloudflare Modus: Tunnel $CloudflareTunnelName → $CloudflareHostname" "INFO"
+
+    } elseif ($choice -eq "2" -or $choice -match "cloud.ru") {
+        $CloudProvider = "cloudru"; $CloudEndpoint = "https://s3.cloud.ru"
+        Write-WizardLog "Anbieter: Cloud.ru VM ($CloudEndpoint) — IP ~149 ₽/Mo" "INFO"
+        $defaultIp = if ($prefill.YandexVmIp) { $prefill.YandexVmIp } else { "" }
+        $promptIp = if ($defaultIp) { "Cloud.ru VM öffentliche IP [$defaultIp]" } else { "Cloud.ru VM öffentliche IP (z.B. 80.87.15.123, leer = Platzhalter)" }
+        $inputIp = Read-Host $promptIp
+        $YandexVmIp = if ($inputIp) { $inputIp } elseif ($defaultIp) { $defaultIp } else { "DEIN_YANDEX_VM_IP" }
+        $defaultVmUser = if ($prefill.YandexVmUser) { $prefill.YandexVmUser } else { "tunneluser" }
+        $inputVmUser = Read-Host "VM Tunnel Benutzer [$defaultVmUser]"
+        $YandexVmUser = if ($inputVmUser) { $inputVmUser } else { $defaultVmUser }
+        $inputPort = Read-Host "VM SSH Port [$YandexVmPort]"
+        if ($inputPort -and $inputPort -match "^\d+$") { $YandexVmPort = [int]$inputPort }
+        $inputTunPort = Read-Host "Reverse Tunnel Port auf VM [$ReverseTunnelPort]"
+        if ($inputTunPort -and $inputTunPort -match "^\d+$") { $ReverseTunnelPort = [int]$inputTunPort }
+        $defaultBucket = if ($prefill.YandexBucket) { $prefill.YandexBucket } elseif ($prefill.CloudBucket) { $prefill.CloudBucket } else { "" }
+        $inputBucket = Read-Host "Object Storage Bucket für Final-Skript (z.B. my-remotegate-bucket, leer = kein Auto-Upload) — $CloudProvider"
+        $YandexBucket = if ($inputBucket) { $inputBucket } elseif ($defaultBucket) { $defaultBucket } else { "" }
+        if ($YandexBucket) { Write-WizardLog "Bucket: $YandexBucket ($CloudProvider) — Upload via $CloudEndpoint." }
+    } else {
         $CloudProvider = "yandex"; $CloudEndpoint = "https://storage.yandexcloud.net"
         Write-WizardLog "Anbieter: Yandex ($CloudEndpoint)" "INFO"
-    } elseif ($inputEndpoint -eq "1" -or -not $inputEndpoint) {
-        $CloudProvider = "cloudru"; $CloudEndpoint = "https://s3.cloud.ru"
-        Write-WizardLog "Anbieter: Cloud.ru (Free Tier) → $CloudEndpoint" "PASS"
-    } elseif ($inputEndpoint -match "https?://") {
-        $CloudEndpoint = $inputEndpoint; $CloudProvider = if ($CloudEndpoint -match "yandex") { "yandex" } else { "cloudru" }
-        Write-WizardLog "Anbieter: Custom $CloudEndpoint"
-    } else {
-        $CloudProvider = "cloudru"; $CloudEndpoint = $defaultEndpoint
+        $defaultIp = if ($prefill.YandexVmIp) { $prefill.YandexVmIp } else { "" }
+        $promptIp = if ($defaultIp) { "Yandex VM öffentliche IP [$defaultIp]" } else { "Yandex VM öffentliche IP (z.B. 51.250.12.34, leer = Platzhalter)" }
+        $inputIp = Read-Host $promptIp
+        $YandexVmIp = if ($inputIp) { $inputIp } elseif ($defaultIp) { $defaultIp } else { "DEIN_YANDEX_VM_IP" }
+        $defaultVmUser = if ($prefill.YandexVmUser) { $prefill.YandexVmUser } else { "tunneluser" }
+        $inputVmUser = Read-Host "Yandex VM Tunnel Benutzer [$defaultVmUser]"
+        $YandexVmUser = if ($inputVmUser) { $inputVmUser } else { $defaultVmUser }
+        $inputPort = Read-Host "Yandex SSH Port [$YandexVmPort]"
+        if ($inputPort -and $inputPort -match "^\d+$") { $YandexVmPort = [int]$inputPort }
+        $inputTunPort = Read-Host "Reverse Tunnel Port auf VM [$ReverseTunnelPort]"
+        if ($inputTunPort -and $inputTunPort -match "^\d+$") { $ReverseTunnelPort = [int]$inputTunPort }
+        $defaultBucket = if ($prefill.YandexBucket) { $prefill.YandexBucket } elseif ($prefill.CloudBucket) { $prefill.CloudBucket } else { "" }
+        $inputBucket = Read-Host "Object Storage Bucket für Final-Skript (z.B. my-remotegate-bucket, leer = kein Auto-Upload) — $CloudProvider"
+        $YandexBucket = if ($inputBucket) { $inputBucket } elseif ($defaultBucket) { $defaultBucket } else { "" }
+        if ($YandexBucket) { Write-WizardLog "Bucket: $YandexBucket ($CloudProvider) — Upload via $CloudEndpoint." }
     }
-
-    $defaultBucket = if ($prefill.YandexBucket) { $prefill.YandexBucket } elseif ($prefill.CloudBucket) { $prefill.CloudBucket } else { "" }
-    $inputBucket = Read-Host "Object Storage Bucket für Final-Skript (z.B. my-remotegate-bucket, leer = kein Auto-Upload) — $CloudProvider"
-    $YandexBucket = if ($inputBucket) { $inputBucket } elseif ($defaultBucket) { $defaultBucket } else { "" }
-    if ($YandexBucket) { Write-WizardLog "Bucket: $YandexBucket ($CloudProvider) — Upload wird versucht via $CloudEndpoint." }
 
     # Optional Status
     $askStatus = Read-Host "Status Endpoint (HTTPS) konfigurieren? (j/N)"
@@ -307,6 +355,12 @@ $replacements = @{
     "__DEVICE_ID__"          = $DeviceId
     "__HOSTNAME__"           = $Hostname
     "__YANDEX_BUCKET__"      = $YandexBucket
+    "__CLOUD_BUCKET__"       = $YandexBucket
+    "__CLOUD_PROVIDER__"     = $CloudProvider
+    "__S3_ENDPOINT__"        = $CloudEndpoint
+    "__CLOUDFLARE_TUNNEL_TOKEN__" = if ($CloudflareTunnelToken) { $CloudflareTunnelToken } else { "DEIN_CLOUDFLARE_TOKEN" }
+    "__CLOUDFLARE_HOSTNAME__"     = if ($CloudflareHostname) { $CloudflareHostname } else { "DEIN_HOSTNAME" }
+    "__CLOUDFLARE_TUNNEL_NAME__"  = if ($CloudflareTunnelName) { $CloudflareTunnelName } else { "remotegate-ssh" }
     "__GENERATION_TIME__"    = $GenerationTime
 }
 
@@ -353,6 +407,9 @@ $redactedPrefill = @{
     CloudProvider = $CloudProvider
     CloudEndpoint = $CloudEndpoint
     S3Endpoint = $CloudEndpoint
+    CloudflareTunnelToken = if ($CloudflareTunnelToken -and $CloudflareTunnelToken -ne "DEIN_CLOUDFLARE_TOKEN") { "***REDACTED***" } else { $CloudflareTunnelToken }
+    CloudflareHostname = $CloudflareHostname
+    CloudflareTunnelName = $CloudflareTunnelName
     StatusEndpoint = $StatusEndpoint
     StatusEnabled = $StatusEnabled
     Hostname = $Hostname
