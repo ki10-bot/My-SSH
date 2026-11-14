@@ -159,18 +159,20 @@ if (-not $Hostname) { $Hostname = "WINDOWS-PC" }
 if (-not $NonInteractive) {
     Write-Host "`n── Schritt 1: Windows Zugang (festes Passwort) ──" -ForegroundColor Green
     Write-Host "Hier legst du dein festes Passwort fest (DEIN_PASSWORT Platzhalter)." -ForegroundColor DarkGray
+    Write-Host "ℹ️  Windows Benutzername wird NICHT hier abgefragt —" -ForegroundColor Cyan
+    Write-Host "   der Windows PC erkennt ihn automatisch beim Installieren (aktueller Benutzer)." -ForegroundColor Cyan
     Write-Host "Wenn du kein Passwort willst, lasse leer → nur Key-Auth (sicherer)." -ForegroundColor DarkGray
     Write-Host ""
 
-    # Windows User
-    $defaultUser = if ($prefill.WindowsUser) { $prefill.WindowsUser } elseif ($env:USERNAME) { $env:USERNAME } else { "RemoteUser" }
-    $inputUser = Read-Host "Windows Benutzername [$defaultUser]"
-    $WindowsUser = if ($inputUser) { $inputUser } else { $defaultUser }
-    Write-WizardLog "Benutzer: $WindowsUser"
+    # Windows User wird automatisch auf Windows erkannt — nicht im Mac-Wizard fragen
+    $WindowsUser = "DEIN_BENUTZER"  # Platzhalter → Auto-Detect auf Windows (siehe template)
+    Write-WizardLog "Windows Benutzer: AUTO (wird auf Windows erkannt, kein Mac-Prompt)" "INFO"
+    Write-Host "  → Windows Benutzer: Automatische Erkennung auf dem Windows PC" -ForegroundColor Green
 
-    # Password (SecureString)
+    # Password (SecureString) — mit Hinweis dass Eingabe unsichtbar ist
+    Write-Host "  Hinweis: Passwort-Eingabe ist unsichtbar (Sicherheit) — tippe + Enter, du siehst nichts, das ist normal." -ForegroundColor DarkGray
     while ($true) {
-        $pw = Read-SecureInput -Prompt "Festes Passwort für $WindowsUser (Eingabe verdeckt, leer = kein Passwort)" -AllowEmpty
+        $pw = Read-SecureInput -Prompt "Festes Passwort für Windows SSH (verdeckt, leer = nur Key-Auth)" -AllowEmpty
         if (-not $pw) {
             Write-WizardLog "Kein Passwort — Key-only (PasswordAuthentication no)." "WARN"
             Write-Host "  → Sicherer: SSH nur mit Keys. Passwort-Login deaktiviert." -ForegroundColor Gray

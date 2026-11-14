@@ -142,22 +142,40 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
 }
 Write-InstallLog "Administrator OK. PowerShell $($PSVersionTable.PSVersion)"
 
-# === Validate generated config ===
+# === Validate + Auto-detect WindowsUser (kein Prompt im Mac-Wizard nötig) ===
 Write-Step "Validiere generierte Konfiguration"
-$cfgErrors = @()
-if ($GeneratedConfig.WindowsUser -match "__WINDOWS_USER__|REPLACE|DEIN_BENUTZER" -or -not $GeneratedConfig.WindowsUser) {
-    $cfgErrors += "WindowsUser ist Platzhalter — Generator erneut ausführen."
+# WindowsUser: Wenn Platzhalter (DEIN_BENUTZER / __WINDOWS_USER__), erkenne automatisch auf dem Windows PC
+if ($GeneratedConfig.WindowsUser -match "__WINDOWS_USER__|REPLACE|DEIN_BENUTZER|AUTO" -or -not $GeneratedConfig.WindowsUser) {
+    Write-InstallLog "WindowsUser ist Platzhalter → auto-ermittle auf diesem PC..." "WARN"
+    Write-Host "  ℹ️  Windows Benutzer wird automatisch auf diesem PC erkannt (keine Eingabe im Mac-Wizard nötig)." -ForegroundColor Cyan
+    try {
+        $detected = $env:USERNAME
+        if (-not $detected -or $detected -eq "SYSTEM") {
+            # Versuche letzten interaktiven Benutzer
+            try {
+                $logged = Get-CimInstance Win32_ComputerSystem -ErrorAction SilentlyContinue | Select-Object -ExpandProperty UserName
+                if ($logged -and $logged.Contains("\")) { $detected = ($logged -split "\\")[-1] }
+            } catch {}
+            if (-not $detected -or $detected -eq "SYSTEM") {
+                $candidates = Get-LocalUser -ErrorAction SilentlyContinue | Where-Object Enabled | Sort-Object LastLogon -Descending
+                if ($candidates) { $detected = $candidates[0].Name }
+            }
+            if (-not $detected) { $detected = $env:COMPUTERNAME + "\" + $env:USERNAME }
+        }
+        $GeneratedConfig.WindowsUser = $detected.Trim()
+        Write-InstallLog "Auto-erkannter WindowsUser: $($GeneratedConfig.WindowsUser)"
+        Write-Host "  → Automatisch erkannter Benutzer: $($GeneratedConfig.WindowsUser)" -ForegroundColor Green
+        Write-Host "    (Passwort wird diesem Benutzer zugewiesen)" -ForegroundColor DarkGray
+    } catch {
+        Write-InstallLog "Auto-detect fehlgeschlagen: $_" "WARN"
+        $GeneratedConfig.WindowsUser = $env:USERNAME
+        Write-Host "  → Fallback: $env:USERNAME" -ForegroundColor Yellow
+    }
 }
 if ($GeneratedConfig.YandexVmIp -match "__YANDEX_VM_IP__|REPLACE|DEIN_YANDEX" -or -not $GeneratedConfig.YandexVmIp) {
-    # Allow empty for offline mode, but warn
     Write-InstallLog "YandexVmIp ist Platzhalter — Tunnel wird nicht verbunden bis IP gesetzt." "WARN"
     Write-Host "WARNUNG: Yandex VM IP ist Platzhalter — nur lokales SSH wird konfiguriert." -ForegroundColor Yellow
     Write-Host "  Später: Notepad C:\ProgramData\RemoteGate\config\config.json → yandex.vmPublicIp setzen" -ForegroundColor White
-}
-if ($cfgErrors.Count -gt 0) {
-    foreach ($e in $cfgErrors) { Write-InstallLog $e "ERROR"; Write-Host "FEHLER: $e" -ForegroundColor Red }
-    Write-Host "Bitte Generator neu ausführen: .\generator\New-RemoteGateDeployment.ps1" -ForegroundColor Yellow
-    exit 1
 }
 Write-InstallLog "Config validiert: User=$($GeneratedConfig.WindowsUser) YandexVmIp=$($GeneratedConfig.YandexVmIp) PassAuth=$UsePasswordAuth"
 

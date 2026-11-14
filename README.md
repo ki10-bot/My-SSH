@@ -125,9 +125,10 @@ RemoteGate/
 │   └── ssh-config.example        # ~/.ssh/config snippet
 ├── config/config.example.json
 ├── docs/
-│   ├── GENERATOR.md              # ⭐ NEW: Wizard & Yandex Upload Guide (deine 8 Schritte)
+│   ├── GENERATOR.md              # ⭐ Wizard & Yandex Upload Guide (deine 8 Schritte)
+│   ├── YANDEX-VM-GUIDE.md        # ⭐ NEU: Wie kriege ich Yandex VM? Kostenlos? (einfach!)
 │   ├── INSTALLATION.md           # Installation (GitHub vs Yandex)
-│   ├── YANDEX-CLOUD-SETUP.md     # Account/VM/Function/Gateway + regions/restrictions
+│   ├── YANDEX-CLOUD-SETUP.md     # Account/VM/Function/Gateway + regions/restrictions (detailliert)
 │   ├── MAC-CONNECTION.md         # ssh -J guide + host keys
 │   ├── SECURITY.md               # Threat model, threat table, audit checklist
 │   ├── TROUBLESHOOTING.md

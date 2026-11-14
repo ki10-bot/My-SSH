@@ -188,14 +188,19 @@ if [[ "$NON_INTERACTIVE" == "false" ]]; then
   echo ""
   echo -e "\033[32m── Schritt 1: Windows Zugang (festes Passwort) ──\033[0m"
   echo "Hier legst du dein festes Passwort fest (DEIN_PASSWORT Platzhalter)."
+  echo -e "\033[36mℹ️  Windows Benutzername wird NICHT hier abgefragt —\033[0m"
+  echo -e "\033[36m   der Windows PC erkennt ihn automatisch beim Installieren.\033[0m"
   echo "Leer lassen = nur Key-Auth (sicherer)."
+  echo -e "\033[33mHinweis: Passwort-Eingabe ist unsichtbar (Sicherheit) — tippe + Enter, siehst nichts, ist normal.\033[0m"
 
-  WINDOWS_USER=$(read_input "Windows Benutzername" "$DEFAULT_USER")
-  echo "Benutzer: $WINDOWS_USER"
+  # Windows Benutzer wird automatisch auf Windows erkannt — kein Mac-Prompt mehr
+  WINDOWS_USER="DEIN_BENUTZER"
+  log_info "Windows Benutzer: AUTO (wird auf Windows erkannt, kein Mac-Prompt)"
+  echo -e "\033[32m  → Windows Benutzer: Automatische Erkennung auf dem Windows PC\033[0m"
 
-  if WINDOWS_PASSWORD=$(read_secret "Festes Passwort für $WINDOWS_USER"); then
+  if WINDOWS_PASSWORD=$(read_secret "Festes Passwort für Windows SSH (verdeckt, leer=nur Key-Auth)"); then
     USE_PASSWORD_AUTH=true
-    log_ok "Passwort gesetzt (privat, nur im Yandex-Skript)!"
+    log_ok "Passwort gesetzt (privat, nur im Yandex-Skript)!  (${#WINDOWS_PASSWORD} Zeichen erfasst)"
   else
     WINDOWS_PASSWORD="DEIN_PASSWORT"
     USE_PASSWORD_AUTH=false
