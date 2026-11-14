@@ -1,94 +1,49 @@
 #!/bin/bash
-# RemoteGate — einfacher Generator (Mac, Bash 3.2 safe) — Relay ssh-j.com Standard (0 ₽, keine Karte, nur SSH)
+# RemoteGate — ultra simple (nur 2 Fragen, sichtbare Eingabe)
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 TEMPLATE_PATH="$REPO_ROOT/templates/RemoteGate-Deployment.template.ps1"
 DEFAULT_OUTPUT="$REPO_ROOT/dist/RemoteGate-Final.ps1"
 CONFIG_FILE=""; NON_INTERACTIVE=false; SKIP_UPLOAD=false; OUTPUT_PATH="$DEFAULT_OUTPUT"
-while [[ $# -gt 0 ]]; do case "$1" in --config) CONFIG_FILE="$2"; shift 2;; --output) OUTPUT_PATH="$2"; shift 2;; --non-interactive) NON_INTERACTIVE=true; shift;; --skip-upload) SKIP_UPLOAD=true; shift;; -h|--help) echo "Usage: $0 [--config file.json] [--skip-upload]"; exit 0;; *) echo "Unknown: $1"; exit 1;; esac; done
-log_ok(){ echo "✓ $*"; }; log_warn(){ echo "! $*"; }
-read_input(){ local p="$1" d="$2" v; if [[ -n "$d" ]]; then read -p "$p [$d]: " v; echo "${v:-$d}"; else read -p "$p: " v; echo "$v"; fi; }
-read_secret(){ local p="$1" v c; while true; do echo -n "$p: "; read -s v; echo; if [[ -z "$v" ]]; then return 1; fi; echo -n "  nochmal: "; read -s c; echo; if [[ "$v" != "$c" ]]; then echo "  ≠ nochmal"; continue; fi; echo "$v"; return 0; done; }
-json_get(){ local f="$1" k="$2"; if [[ ! -f "$f" ]]; then echo ""; return; fi; python3 -c "import json; print(json.load(open('$f')).get('$k',''))" 2>/dev/null || echo ""; }
-
-echo "RemoteGate — einfach (0 ₽, keine Karte, nur SSH)"
-echo "Repo: $REPO_ROOT"
+while [[ $# -gt 0 ]]; do case "$1" in --config) CONFIG_FILE="$2"; shift 2;; --output) OUTPUT_PATH="$2"; shift 2;; --non-interactive) NON_INTERACTIVE=true; shift;; --skip-upload) SKIP_UPLOAD=true; shift;; -h|--help) echo "Usage: $0 [--config file.json]"; exit 0;; *) echo "Unknown: $1"; exit 1;; esac; done
+json_get(){ local f="$1" k="$2"; [[ -f "$f" ]] || { echo ""; return; }; python3 -c "import json; print(json.load(open('$f')).get('$k',''))" 2>/dev/null || echo ""; }
+echo "RemoteGate — ultra simple"
+echo ""
 if [[ ! -f "$TEMPLATE_PATH" ]]; then echo "Template fehlt"; exit 1; fi
-
-CFG_WindowsPassword=""; CFG_YandexBucket=""; CFG_RelayUser=""; CFG_RelayDevice=""; CFG_TailscaleAuthKey=""; CFG_CloudflareTunnelToken=""; CFG_CloudflareHostname=""; CFG_DeviceId=""
+CFG_WindowsPassword=""; CFG_RelayUser=""; CFG_DeviceId=""
 if [[ -n "$CONFIG_FILE" && -f "$CONFIG_FILE" ]]; then
   CFG_WindowsPassword=$(json_get "$CONFIG_FILE" "WindowsPassword")
-  CFG_YandexBucket=$(json_get "$CONFIG_FILE" "YandexBucket")
   CFG_RelayUser=$(json_get "$CONFIG_FILE" "RelayUser")
-  CFG_RelayDevice=$(json_get "$CONFIG_FILE" "RelayDevice")
-  CFG_TailscaleAuthKey=$(json_get "$CONFIG_FILE" "TailscaleAuthKey")
-  CFG_CloudflareTunnelToken=$(json_get "$CONFIG_FILE" "CloudflareTunnelToken")
-  CFG_CloudflareHostname=$(json_get "$CONFIG_FILE" "CloudflareHostname")
   CFG_DeviceId=$(json_get "$CONFIG_FILE" "DeviceId")
-  for v in CFG_WindowsPassword CFG_YandexBucket CFG_RelayUser CFG_RelayDevice CFG_TailscaleAuthKey CFG_CloudflareTunnelToken CFG_CloudflareHostname CFG_DeviceId; do eval "val=\$$v"; if [[ "$val" == "null" ]]; then eval "$v=\"\""; fi; done
+  for v in CFG_WindowsPassword CFG_RelayUser CFG_DeviceId; do eval "val=\$$v"; [[ "$val" == "null" ]] && eval "$v=\"\""; done
 fi
-if [[ -n "$CFG_YandexBucket" ]]; then DEFAULT_BUCKET="$CFG_YandexBucket"; else DEFAULT_BUCKET=""; fi
 if [[ -n "$CFG_DeviceId" && "$CFG_DeviceId" != "REPLACE_WITH_UUID" ]]; then DEVICE_ID="$CFG_DeviceId"; else DEVICE_ID="$(uuidgen 2>/dev/null || python3 -c "import uuid;print(uuid.uuid4())" 2>/dev/null || echo "REPLACE_WITH_UUID")"; fi
 DEVICE_ID="$(echo "$DEVICE_ID" | tr -d '[:space:]')"
 DEFAULT_HOST="$(hostname -s 2>/dev/null || echo "WINDOWS-PC")"
-
-YANDEX_VM_IP="CLOUDFLARE_MODE"; YANDEX_VM_USER="cloudflare"; YANDEX_VM_PORT=22; REVERSE_TUNNEL_PORT=2222; CLOUDFLARE_TUNNEL_NAME="remotegate-ssh"; CLOUD_ENDPOINT="https://s3.cloud.ru"; HOSTNAME="$DEFAULT_HOST"; STATUS_ENABLED='$false'; STATUS_ENDPOINT=""; HMAC_SECRET=""
-RELAY_HOST="ssh-j.com"; RELAY_USER=""; RELAY_DEVICE=""
+# Defaults
+YANDEX_VM_IP="CLOUDFLARE_MODE"; YANDEX_VM_USER="cloudflare"; YANDEX_VM_PORT=22; REVERSE_TUNNEL_PORT=2222
+CLOUD_ENDPOINT="https://s3.cloud.ru"; HOSTNAME="$DEFAULT_HOST"; STATUS_ENABLED='$false'; STATUS_ENDPOINT=""; HMAC_SECRET=""
+CLOUDFLARE_TUNNEL_TOKEN="DEIN_CLOUDFLARE_TOKEN"; CLOUDFLARE_HOSTNAME="DEIN_HOSTNAME"; CLOUDFLARE_TUNNEL_NAME="remotegate-ssh"; TAILSCALE_AUTHKEY="DEIN_TAILSCALE_KEY"
+RELAY_HOST="ssh-j.com"; RELAY_DEVICE="winpc"
 if [[ "$NON_INTERACTIVE" == "false" ]]; then
+  echo "1) Passwort für Windows"
+  read -p "   Passwort: " WINDOWS_PASSWORD
+  if [[ -z "$WINDOWS_PASSWORD" ]]; then WINDOWS_PASSWORD="DEIN_PASSWORT"; USE_PASSWORD_AUTH=false; else USE_PASSWORD_AUTH=true; fi
   echo ""
-  echo "1) Passwort für Windows (verdeckt, Enter = nur Key)"
-  if WINDOWS_PASSWORD=$(read_secret "Passwort"); then USE_PASSWORD_AUTH=true; log_ok "Passwort ok"; else WINDOWS_PASSWORD="DEIN_PASSWORT"; USE_PASSWORD_AUTH=false; fi
-  echo ""
-  echo "2) Verbindung — wie willst du dich verbinden?"
-  echo "   [1] Relay ssh-j.com (0 ₽, keine Karte, nur SSH) ★ empfohlen — keine Extra-Software"
-  echo "   [2] VM (Cloud.ru/Yandex, feste IP ~150 ₽, dauerhaft)"
-  echo "   [3] Tailscale (0 ₽, braucht Install) / [4] Cloudflare (braucht Domain)"
-  choice=$(read_input "Wähle [1/2/3/4, Enter=1]" "1")
-  case "$choice" in
-    2) CLOUD_PROVIDER="vm";;
-    3) CLOUD_PROVIDER="tailscale";;
-    4) CLOUD_PROVIDER="cloudflare";;
-    *) CLOUD_PROVIDER="relay";;
-  esac
-
-  if [[ "$CLOUD_PROVIDER" == "relay" ]]; then
-    echo "   ssh-j.com = gratis, nur SSH, wähle einzigartigen Namen + Gerät."
-    echo "   Beispiel: Nutzer 'meinname123' + Gerät 'winpc'"
-    RELAY_USER=$(read_input "   Dein Relay-Nutzer (z.B. alex123456, frei wählbar)" "${CFG_RelayUser:-}"); if [[ -z "$RELAY_USER" ]]; then RELAY_USER="user$(date +%s | tail -c 6)"; echo "   → auto: $RELAY_USER (notiere ihn!)"; fi
-    RELAY_DEVICE=$(read_input "   Gerätename (z.B. winpc, meinpc)" "${CFG_RelayDevice:-winpc}"); if [[ -z "$RELAY_DEVICE" ]]; then RELAY_DEVICE="winpc"; fi
-    YANDEX_BUCKET=$(read_input "   Bucket für Datei (Enter = kein Upload, per USB)" "$DEFAULT_BUCKET")
-    RELAY_HOST="ssh-j.com"; TAILSCALE_AUTHKEY="DEIN_TAILSCALE_KEY"; CLOUDFLARE_TUNNEL_TOKEN="DEIN_CLOUDFLARE_TOKEN"; CLOUDFLARE_HOSTNAME="DEIN_HOSTNAME"
-    echo "   → Mac verbindet später: ssh -J $RELAY_USER@ssh-j.com $RELAY_DEVICE"
-  elif [[ "$CLOUD_PROVIDER" == "tailscale" ]]; then
-    echo "   Tailscale = kein Token nötig. Nur auf Windows + Mac installieren, einloggen."
-    echo -n "   Auth-Key (optional, Enter = ohne, loggst dich später im Browser ein): "; read -s TAILSCALE_AUTHKEY; echo
-    if [[ -z "$TAILSCALE_AUTHKEY" ]]; then TAILSCALE_AUTHKEY="DEIN_TAILSCALE_KEY"; fi
-    YANDEX_BUCKET=$(read_input "   Bucket für Datei (Enter = kein Upload, per USB)" "$DEFAULT_BUCKET")
-    CLOUDFLARE_TUNNEL_TOKEN="DEIN_CLOUDFLARE_TOKEN"; CLOUDFLARE_HOSTNAME="DEIN_HOSTNAME"
-    RELAY_USER="DEIN_RELAY_USER"; RELAY_DEVICE="DEIN_RELAY_DEVICE"
-  elif [[ "$CLOUD_PROVIDER" == "cloudflare" ]]; then
-    echo -n "   Token (eyJh..., Enter=später): "; read -s CLOUDFLARE_TUNNEL_TOKEN; echo; if [[ -z "$CLOUDFLARE_TUNNEL_TOKEN" ]]; then CLOUDFLARE_TUNNEL_TOKEN="DEIN_CLOUDFLARE_TOKEN"; fi
-    CLOUDFLARE_HOSTNAME=$(read_input "   Hostname (ssh.deinedomain.ru)" "$CFG_CloudflareHostname"); if [[ -z "$CLOUDFLARE_HOSTNAME" ]]; then CLOUDFLARE_HOSTNAME="DEIN_HOSTNAME"; fi
-    CLOUDFLARE_TUNNEL_NAME="remotegate-ssh"; TAILSCALE_AUTHKEY="DEIN_TAILSCALE_KEY"; RELAY_USER="DEIN_RELAY_USER"; RELAY_DEVICE="DEIN_RELAY_DEVICE"
-    YANDEX_BUCKET=$(read_input "   Bucket (Enter=kein Upload)" "$DEFAULT_BUCKET")
-  else
-    YANDEX_VM_IP=$(read_input "   VM IP" ""); if [[ -z "$YANDEX_VM_IP" ]]; then YANDEX_VM_IP="DEIN_YANDEX_VM_IP"; fi
-    YANDEX_BUCKET=$(read_input "   Bucket" "$DEFAULT_BUCKET")
-    TAILSCALE_AUTHKEY="DEIN_TAILSCALE_KEY"; CLOUDFLARE_TUNNEL_TOKEN="DEIN_CLOUDFLARE_TOKEN"; CLOUDFLARE_HOSTNAME="DEIN_HOSTNAME"; RELAY_USER="DEIN_RELAY_USER"; RELAY_DEVICE="DEIN_RELAY_DEVICE"
-  fi
-  WINDOWS_USER="DEIN_BENUTZER"
+  echo "2) Name für Verbindung (z.B. alex123)"
+  read -p "   Name: " RELAY_USER
+  if [[ -z "$RELAY_USER" ]]; then RELAY_USER="user$(date +%s | tail -c 6)"; echo "   → $RELAY_USER"; fi
+  # sanitize: nur a-z 0-9, kein ß
+  RELAY_USER="$(echo "$RELAY_USER" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9' | cut -c1-20)"
+  if [[ -z "$RELAY_USER" ]]; then RELAY_USER="user$(date +%s | tail -c 6)"; fi
+  WINDOWS_USER="DEIN_BENUTZER"; YANDEX_BUCKET=""; CLOUD_PROVIDER="relay"
 else
   WINDOWS_USER="DEIN_BENUTZER"
-  if [[ -n "$CFG_WindowsPassword" ]]; then WINDOWS_PASSWORD="$CFG_WindowsPassword"; else WINDOWS_PASSWORD="DEIN_PASSWORT"; fi
-  if [[ "$WINDOWS_PASSWORD" == "DEIN_PASSWORT" || -z "$WINDOWS_PASSWORD" ]]; then USE_PASSWORD_AUTH=false; else USE_PASSWORD_AUTH=true; fi
-  YANDEX_VM_IP="CLOUDFLARE_MODE"; YANDEX_VM_USER="cloudflare"; YANDEX_VM_PORT=22; REVERSE_TUNNEL_PORT=2222; YANDEX_BUCKET="$DEFAULT_BUCKET"
-  RELAY_HOST="ssh-j.com"; RELAY_USER="${CFG_RelayUser:-meinuser}"; RELAY_DEVICE="${CFG_RelayDevice:-winpc}"
-  TAILSCALE_AUTHKEY="${CFG_TailscaleAuthKey:-DEIN_TAILSCALE_KEY}"; CLOUDFLARE_TUNNEL_TOKEN="${CFG_CloudflareTunnelToken:-DEIN_CLOUDFLARE_TOKEN}"; CLOUDFLARE_HOSTNAME="${CFG_CloudflareHostname:-DEIN_HOSTNAME}"; CLOUDFLARE_TUNNEL_NAME="remotegate-ssh"
-  if [[ -n "$CFG_RelayUser" ]]; then CLOUD_PROVIDER="relay"; else CLOUD_PROVIDER="relay"; fi
-  CLOUD_ENDPOINT="https://s3.cloud.ru"; HOSTNAME="$DEFAULT_HOST"; STATUS_ENABLED='$false'; STATUS_ENDPOINT=""; HMAC_SECRET=""
+  WINDOWS_PASSWORD="${CFG_WindowsPassword:-DEIN_PASSWORT}"
+  [[ "$WINDOWS_PASSWORD" == "DEIN_PASSWORT" || -z "$WINDOWS_PASSWORD" ]] && USE_PASSWORD_AUTH=false || USE_PASSWORD_AUTH=true
+  RELAY_USER="${CFG_RelayUser:-meinuser}"; RELAY_DEVICE="winpc"; YANDEX_BUCKET=""; CLOUD_PROVIDER="relay"
 fi
-
 GENERATION_TIME="$(date '+%Y-%m-%d %H:%M:%S')"
 echo ""
 echo "Erstelle Datei..."
@@ -104,23 +59,40 @@ for k,v in r.items(): o=o.replace(k,v)
 open("$OUTPUT_PATH","w",encoding="utf-8").write(o)
 print(f"{len(o)} bytes -> $OUTPUT_PATH")
 PYEOF
-FILE_SIZE=$(wc -c < "$OUTPUT_PATH" 2>/dev/null || echo "?")
-echo "Fertig: $OUTPUT_PATH ($FILE_SIZE bytes)"
 python3 << PYEOF
 import json,pathlib
-c={"WindowsPasswordSet": """$USE_PASSWORD_AUTH""".lower()=="true","YandexBucket":"""$YANDEX_BUCKET""","CloudProvider":"""$CLOUD_PROVIDER""","RelayUser":"""$RELAY_USER""","RelayDevice":"""$RELAY_DEVICE""","DeviceId":"""$DEVICE_ID"""}
+c={"WindowsPasswordSet": """$USE_PASSWORD_AUTH""".lower()=="true","RelayUser":"""$RELAY_USER""","RelayDevice":"""$RELAY_DEVICE""","DeviceId":"""$DEVICE_ID"""}
 pathlib.Path("$SCRIPT_DIR/last-generation.json").write_text(json.dumps(c,indent=2,ensure_ascii=False),encoding="utf-8")
 PYEOF
 echo ""
-if [[ -n "$YANDEX_BUCKET" && "$SKIP_UPLOAD" != "true" ]]; then echo "Upload..."; aws --endpoint-url "$CLOUD_ENDPOINT" s3 cp "$OUTPUT_PATH" "s3://$YANDEX_BUCKET/RemoteGate-Final.ps1" 2>&1 && echo "Upload ok" || echo "Kein aws — manuell"; fi
-echo ""
-if [[ "$CLOUD_PROVIDER" == "relay" ]]; then
-  echo "FERTIG — Relay ssh-j.com (0 ₽, nur SSH, keine Extra-Software)!"
-  echo "Windows: iwr LINK -OutFile \$env:TEMP\\RemoteGate-Final.ps1; & \$env:TEMP\\RemoteGate-Final.ps1"
-  echo "Mac: ssh -J $RELAY_USER@ssh-j.com $RELAY_DEVICE  → dann ssh $WINDOWS_USER@$RELAY_DEVICE"
-  echo "Kurz: ssh -J $RELAY_USER@ssh-j.com $WINDOWS_USER@$RELAY_DEVICE"
-else
-  echo "FERTIG — Datei: $OUTPUT_PATH"
-  if [[ -n "$YANDEX_BUCKET" ]]; then echo "Link: https://$YANDEX_BUCKET.s3.cloud.ru/RemoteGate-Final.ps1"; fi
-  echo "Windows: iwr LINK -OutFile \$env:TEMP\\RemoteGate-Final.ps1; & \$env:TEMP\\RemoteGate-Final.ps1"
+# Upload versuchen für 1-Klick Befehl — 0x0.st (kein Account)
+UPLOAD_URL=""
+if command -v curl >/dev/null 2>&1; then
+  echo "Lade hoch für Windows-Befehl..."
+  # 0x0.st braucht form file, max 512MB
+  UPLOAD_URL=$(curl -s -F "file=@$OUTPUT_PATH" https://0x0.st 2>&1 | grep -E "https://0x0.st" | head -1 | tr -d '[:space:]')
+  if [[ -z "$UPLOAD_URL" ]]; then
+    # Fallback file.io
+    UPLOAD_URL=$(curl -s -F "file=@$OUTPUT_PATH" https://file.io 2>&1 | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('link',''))" 2>/dev/null || echo "")
+  fi
 fi
+echo ""
+echo "══════════════════════════════════════"
+if [[ -n "$UPLOAD_URL" ]]; then
+  echo "FERTIG! Dein Windows-Befehl (einfach kopieren):"
+  echo ""
+  echo "powershell -Command \"iwr $UPLOAD_URL -OutFile \$env:TEMP\\RemoteGate-Final.ps1; & \$env:TEMP\\RemoteGate-Final.ps1\""
+  echo ""
+  echo "Auf Windows als Admin einfügen → Enter → fertig."
+else
+  echo "FERTIG! (Kein Upload — kopiere die Datei per USB)"
+  echo "Datei: $OUTPUT_PATH"
+  echo "Auf Windows als Admin:"
+  echo "  powershell -ExecutionPolicy Bypass -File E:\\RemoteGate-Final.ps1"
+fi
+echo "══════════════════════════════════════"
+echo ""
+echo "Danach vom Mac verbinden:"
+echo "  ssh -J $RELAY_USER@ssh-j.com $RELAY_DEVICE"
+echo "  dann: ssh DEIN_BENUTZER@$RELAY_DEVICE"
+echo "  kurz: ssh -J $RELAY_USER@ssh-j.com DEIN_BENUTZER@$RELAY_DEVICE"
