@@ -1,6 +1,6 @@
 # RemoteGate — Secure Windows Remote Administration via Cloud.ru (Free Tier)
 
-> **Owner's setup:** MacBook (macOS, SSH via Terminal) controls one owned Windows 10 PC via SSH through a Cloud.ru Evolution bastion (Free Tier VM 2vCPU/4GB gratis). No VPN required.
+> **Owner's setup:** MacBook (macOS, SSH via Terminal) controls one owned Windows 10 PC via **Tailscale (0 ₽, keine Karte)** — Standard. Cloud.ru/Yandex/Cloudflare weiter möglich.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](#license)
 [![Windows](https://img.shields.io/badge/Windows-10%201809%2B-blue)](#requirements)
@@ -8,18 +8,15 @@
 
 > ### ➡️ **START HIER / START HERE — Doppelklick auf Mac, Doppelklick auf Windows**
 >
-> **Auf Mac (Beispiel-Skript wird auf Mac generiert):** Im Finder **`generate_template.command` doppelklicken** → Wizard startet → festes Passwort (`DEIN_PASSWORT`) + Yandex Daten → `dist/RemoteGate-Final.ps1` → auto Upload nach Cloud.ru
->
-> **Alternativ Terminal:** `bash generate_template.command` oder `bash generator/generate.sh` oder `./generate_template.sh`
->
+> **Auf Mac:** Im Finder **`generate_template.command` doppelklicken** → Wizard → Passwort → `dist/RemoteGate-Final.ps1`
+> **Standard: Tailscale (0 ₽, keine Karte, keine Domain)** — siehe `docs/EINFACH.md` + `docs/TAILSCALE-GUIDE.md`
+> **Alternativ Terminal:** `bash generate_template.command` oder `bash generator/generate.sh`
 > **Auf Windows:** `Generate-RemoteGate.bat` doppelklicken (oder `.\generator\New-RemoteGateDeployment.ps1` in PowerShell)
->
-> Keine Suche nötig — der Pfeil zeigt hierher! 📂 `generate_template.command` liegt im Repo-Root, direkt am Anfang. Siehe `docs/GENERATOR.md` + Pfeil unten.
 >
 > ```bash
 > git clone https://github.com/ki10-bot/My-SSH.git && cd My-SSH
 > open generate_template.command  # Mac Finder — oder Doppelklick
-> # → Wizard [1] Cloudflare → Token+Hostname → FINAL aus S3 → Windows cloudflared
+> # → Wizard [1] Tailscale (0 ₽, keine Karte) → FINAL → ssh 100.x.x.x  [2] Cloudflare Domain
 > ```
 
 ## What RemoteGate is

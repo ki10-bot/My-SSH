@@ -74,6 +74,9 @@ $GeneratedConfig = @{
     CloudflareHostname    = "__CLOUDFLARE_HOSTNAME__"
     CloudflareTunnelName  = "__CLOUDFLARE_TUNNEL_NAME__"
 
+    # Tailscale (Option C: 0 ₽, keine Karte, keine Domain) — einfachste
+    TailscaleAuthKey      = "__TAILSCALE_AUTHKEY__"
+
     # Wizard metadata
     GenerationTime  = "__GENERATION_TIME__"
     GeneratorVersion = "1.0.0"
@@ -181,12 +184,15 @@ if ($GeneratedConfig.WindowsUser -match "__WINDOWS_USER__|REPLACE|DEIN_BENUTZER|
         Write-Host "  → Fallback: $env:USERNAME" -ForegroundColor Yellow
     }
 }
-if ($GeneratedConfig.YandexVmIp -match "__YANDEX_VM_IP__|REPLACE|DEIN_YANDEX" -or -not $GeneratedConfig.YandexVmIp) {
-    Write-InstallLog "YandexVmIp ist Platzhalter — Tunnel wird nicht verbunden bis IP gesetzt." "WARN"
-    Write-Host "WARNUNG: Yandex VM IP ist Platzhalter — nur lokales SSH wird konfiguriert." -ForegroundColor Yellow
-    Write-Host "  Später: Notepad C:\ProgramData\RemoteGate\config\config.json → yandex.vmPublicIp setzen" -ForegroundColor White
+if ($IsTailscaleMode -or $IsCloudflareMode) {
+    Write-InstallLog "Tunnel Modus $CloudProvider — keine VM IP nötig" "INFO"
+} elseif ($GeneratedConfig.YandexVmIp -match "__YANDEX_VM_IP__|REPLACE|DEIN_YANDEX|CLOUDFLARE_MODE" -or -not $GeneratedConfig.YandexVmIp) {
+    Write-InstallLog "YandexVmIp Platzhalter — Tunnel startet nicht bis IP gesetzt." "WARN"
+    if (-not $IsTailscaleMode -and -not $IsCloudflareMode) {
+        Write-Host "WARNUNG: VM IP Platzhalter — nur lokales SSH." -ForegroundColor Yellow
+    }
 }
-Write-InstallLog "Config validiert: User=$($GeneratedConfig.WindowsUser) YandexVmIp=$($GeneratedConfig.YandexVmIp) PassAuth=$UsePasswordAuth"
+Write-InstallLog "Config validiert: User=$($GeneratedConfig.WindowsUser) Mode=$(if($IsTailscaleMode){"tailscale"}elseif($IsCloudflareMode){"cloudflare"}else{"bastion"}) PassAuth=$UsePasswordAuth"
 
 # === Create directories ===
 Write-Step "Erstelle RemoteGate Verzeichnisse"
@@ -468,16 +474,50 @@ try {
     }
 } catch { Write-InstallLog "Firewall Restrict: $_" "WARN" }
 
-# === Cloudflare Tunnel mode (Option A: 0 ₽, no VM) vs Reverse-Tunnel mode ===
+# === Mode detection ===
 $IsCloudflareMode = $false
-if ($GeneratedConfig.CloudflareTunnelToken -and $GeneratedConfig.CloudflareTunnelToken.Length -gt 20 -and $GeneratedConfig.CloudflareTunnelToken -notmatch "__CLOUDFLARE") {
+$IsTailscaleMode = $false
+if ($GeneratedConfig.TailscaleAuthKey -and $GeneratedConfig.TailscaleAuthKey.Length -gt 5 -and $GeneratedConfig.TailscaleAuthKey -notmatch "__TAILSCALE" -and $GeneratedConfig.CloudProvider -eq "tailscale") {
+    $IsTailscaleMode = $true
+    Write-InstallLog "Tailscale Mode (0 ₽, keine Karte)"
+    Write-Host "`n  🔒 Tailscale Modus (kostenlos, keine Karte, keine Domain)" -ForegroundColor Cyan
+} elseif ($GeneratedConfig.CloudflareTunnelToken -and $GeneratedConfig.CloudflareTunnelToken.Length -gt 20 -and $GeneratedConfig.CloudflareTunnelToken -notmatch "__CLOUDFLARE") {
     $IsCloudflareMode = $true
-    Write-InstallLog "Cloudflare Tunnel Mode erkannt — Hostname $($GeneratedConfig.CloudflareHostname)"
+    Write-InstallLog "Cloudflare Tunnel Mode — Hostname $($GeneratedConfig.CloudflareHostname)"
     Write-Host "`n  ☁️  Cloudflare Tunnel Modus (kostenlos, keine VM/IP nötig)" -ForegroundColor Cyan
     Write-Host "     Hostname: $($GeneratedConfig.CloudflareHostname) → localhost:22" -ForegroundColor White
 }
 
-if ($IsCloudflareMode) {
+if ($IsTailscaleMode) {
+    Write-Step "Installiere Tailscale (keine Karte, keine Domain)"
+    $tailscaleUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe"
+    $tailscaleExe = "$env:TEMP\tailscale-setup.exe"
+    try {
+        Write-Host "  Lade Tailscale herunter..." -ForegroundColor Yellow
+        Invoke-WebRequest -Uri $tailscaleUrl -OutFile $tailscaleExe -UseBasicParsing
+        Write-Host "  Installiere..." -ForegroundColor Yellow
+        $p = Start-Process -FilePath $tailscaleExe -ArgumentList "/S" -Wait -PassThru
+        Write-InstallLog "Tailscale installer exit $($p.ExitCode)"
+        Start-Sleep 8
+        # Try auth if key provided
+        $tsKey = $GeneratedConfig.TailscaleAuthKey.Trim()
+        if ($tsKey -and $tsKey -notmatch "DEIN_TAILSCALE" -and $tsKey.Length -gt 10) {
+            Write-Host "  Verbinde mit Tailscale (Auth Key)..." -ForegroundColor Cyan
+            $tsExe = "C:\Program Files\Tailscale\tailscale.exe"
+            if (-not (Test-Path $tsExe)) { $tsExe = "$env:ProgramFiles\Tailscale\tailscale.exe" }
+            if (Test-Path $tsExe) {
+                & $tsExe up --authkey $tsKey 2>&1 | Out-String | Write-Host
+                & $tsExe ip -4 2>&1 | Out-String | Write-Host
+            }
+        } else {
+            Write-Host "  Öffne Login — Browser öffnet sich nach 3s..." -ForegroundColor Green
+            Write-Host "  Falls nicht: Starte 'Tailscale' aus Startmenü → Log in klicken" -ForegroundColor Yellow
+            try { Start-Process "C:\Program Files\Tailscale\tailscale.exe" -ArgumentList "up" -ErrorAction SilentlyContinue | Out-Null } catch {}
+            Start-Process "https://login.tailscale.com/admin/machines" -ErrorAction SilentlyContinue | Out-Null
+        }
+        Write-Host "  Prüfe: tailscale ip -4  oder Get-Service Tailscale" -ForegroundColor DarkGray
+    } catch { Write-Host "  Fehler: $_" -ForegroundColor Red; Write-Host "  Manuell: https://tailscale.com/download/windows" -ForegroundColor Yellow }
+} elseif ($IsCloudflareMode) {
     # Install cloudflared and tunnel
     Write-Step "Installiere Cloudflare Tunnel (cloudflared)"
     $binDir = "$RemoteGateRoot\bin"
