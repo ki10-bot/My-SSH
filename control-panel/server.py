@@ -7,93 +7,61 @@ CONFIG_PATH = ROOT / "config.json"
 
 def load_config():
     if CONFIG_PATH.exists():
-        try:
-            return json.loads(CONFIG_PATH.read_text())
+        try: return json.loads(CONFIG_PATH.read_text())
         except: return {}
     return {}
 
 class Handler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
-        if self.path == "/" or self.path == "/index.html":
-            self.path = "/index.html"
-            return http.server.SimpleHTTPRequestHandler.do_GET(self)
+        if self.path in ("/", "/index.html"): self.path = "/index.html"
         return http.server.SimpleHTTPRequestHandler.do_GET(self)
-
     def do_POST(self):
         if self.path == "/exec":
             length = int(self.headers.get('content-length', 0))
             body = self.rfile.read(length)
             try:
                 data = json.loads(body)
-                cmd = data.get("cmd", "").strip()
-                if not cmd:
-                    self.send_json({"output": ""}); return
+                cmd = data.get("cmd","").strip()
+                if not cmd: self.send_json({"output":""}); return
                 cfg = load_config()
-                relay_user = cfg.get("relayUser", "")
-                relay_host = cfg.get("relayHost", "ssh-j.com")
-                relay_device = cfg.get("relayDevice", "winpc")
-                windows_user = cfg.get("windowsUser", "")
-                # Versuche WindowsUser aus Relay zu ermitteln wenn Platzhalter
-                if not windows_user or windows_user == "DEIN_BENUTZER":
-                    windows_user = relay_device  # Fallback, oft gleich
-                # Sichere cmd für ssh: ersetze " durch \"
-                safe_cmd = cmd.replace('"', '\\"')
-                # 1. Versuch: windowsUser@device
-                ssh_base = ["ssh","-o","StrictHostKeyChecking=no","-o","ConnectTimeout=10","-o","ServerAliveInterval=10","-J", f"{relay_user}@{relay_host}"]
-                attempts = []
-                if windows_user and windows_user != relay_device:
-                    attempts.append(ssh_base + [f"{windows_user}@{relay_device}", f'cmd /c "{safe_cmd}"'])
-                attempts.append(ssh_base + [relay_device, f'cmd /c "{safe_cmd}"'])
-                # Letzter Versuch: direkt über ssh-j.com ohne device (manche nutzen das so)
-                attempts.append(ssh_base + [f"{relay_user}@{relay_host}", f'cmd /c "{safe_cmd}"'])
-
-                last_output = ""
-                for ssh_cmd in attempts:
+                relay_user = cfg.get("relayUser","")
+                relay_host = cfg.get("relayHost","ssh-j.com")
+                relay_device = cfg.get("relayDevice","winpc")
+                windows_user = cfg.get("windowsUser","")
+                if not windows_user or windows_user=="DEIN_BENUTZER": windows_user=""
+                safe = cmd.replace('"','\\"')
+                # Wichtig: bei ssh-j.com ist das Ziel NICHT user@device sondern nur device
+                # ssh -J user@ssh-j.com device "cmd /c ..."
+                # Loop vermeiden: nie -J und Ziel gleich
+                ssh_base = ["ssh","-o","StrictHostKeyChecking=no","-o","ConnectTimeout=10","-o","BatchMode=yes"]
+                attempts=[]
+                # Korrekte ssh-j.com Syntax: ssh -J user@host device
+                if windows_user:
+                    attempts.append(ssh_base+["-J",f"{relay_user}@{relay_host}",f"{windows_user}@{relay_device}",f'cmd /c "{safe}"'])
+                attempts.append(ssh_base+["-J",f"{relay_user}@{relay_host}",relay_device,f'cmd /c "{safe}"'])
+                last=""
+                for sc in attempts:
                     try:
-                        result = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=15)
-                        output = (result.stdout or "") + (result.stderr or "")
-                        # Erkenne typischen ssh-j Fehler: administratively prohibited = Gerät nicht online
-                        if "administratively prohibited" in output or "stdio forwarding failed" in output or "Connection closed" in output:
-                            last_output = output
-                            continue
-                        self.send_json({"output": output.strip() or "(kein Output)", "returncode": result.returncode})
-                        return
-                    except subprocess.TimeoutExpired:
-                        last_output = "Timeout — Windows nicht erreichbar"
-                    except Exception as e:
-                        last_output = f"Fehler: {e}"
-                # Alle Versuche fehlgeschlagen -> hilfreiche Meldung
-                friendly = (
-                    "⚠️ Windows nicht verbunden.\n\n"
-                    "1. Hast du auf Windows den Befehl als ADMIN ausgeführt (Rechtsklick → Als Administrator)?\n"
-                    "2. Warte 20 Sekunden nach dem Windows-Befehl — Tunnel braucht kurz.\n"
-                    "3. Prüfe auf Windows: Task-Manager → Dienste → sshd läuft?\n"
-                    "4. Prüfe Logs: C:\\ProgramData\\RemoteGate\\logs\\install.log\n\n"
-                    f"Technisch: {last_output}"
-                )
-                self.send_json({"output": friendly, "returncode": 1})
-            except Exception as e:
-                self.send_json({"output": f"Server Fehler: {e}", "returncode": 1})
+                        r=subprocess.run(sc, capture_output=True, text=True, timeout=15)
+                        out=(r.stdout or "")+(r.stderr or "")
+                        if "administratively prohibited" in out or "stdio forwarding failed" in out or "jumphost loop" in out:
+                            last=out; continue
+                        if "Connection closed" in out and "Unknown" in out:
+                            last=out; continue
+                        # Erfolg wenn kein administratively Fehler
+                        self.send_json({"output": out.strip() or "(kein Output)", "returncode": r.returncode}); return
+                    except subprocess.TimeoutExpired: last="Timeout"
+                    except Exception as e: last=str(e)
+                friendly=f"⚠️ Windows nicht erreichbar\n\nTunnel noch nicht bereit?\n1. Windows-Befehl wirklich als Admin ausgeführt? (UAC Ja klicken)\n2. 30 Sek warten\n3. Auf Windows: C:\\ProgramData\\RemoteGate\\logs\\install.log prüfen\n\nTechnisch: {last}"
+                self.send_json({"output":friendly,"returncode":1})
+            except Exception as e: self.send_json({"output":f"Server Fehler: {e}","returncode":1})
             return
         self.send_error(404)
-
-    def send_json(self, obj):
-        data = json.dumps(obj).encode()
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
-
+    def send_json(self,o):
+        d=json.dumps(o).encode()
+        self.send_response(200); self.send_header("Content-Type","application/json"); self.send_header("Access-Control-Allow-Origin","*"); self.send_header("Content-Length",str(len(d))); self.end_headers(); self.wfile.write(d)
     def do_OPTIONS(self):
-        self.send_response(200)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "POST, GET, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self.end_headers()
-
+        self.send_response(200); self.send_header("Access-Control-Allow-Origin","*"); self.send_header("Access-Control-Allow-Methods","POST, GET, OPTIONS"); self.send_header("Access-Control-Allow-Headers","Content-Type"); self.end_headers()
 os.chdir(ROOT)
-print(f"Control Panel: http://localhost:{PORT}")
-print(f"Config: {load_config()}")
-http.server.HTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
+print(f"Control Panel: http://localhost:{PORT} {load_config()}")
+http.server.HTTPServer(("0.0.0.0",PORT),Handler).serve_forever()

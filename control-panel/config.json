@@ -1,7 +1,7 @@
 {
-  "relayUser": "b",
+  "relayUser": "testuser",
   "relayHost": "ssh-j.com",
   "relayDevice": "winpc",
   "windowsUser": "DEIN_BENUTZER",
-  "deviceId": "33d26b75-a07e-4942-ac16-300ec481a5d2"
+  "deviceId": "2af8c064-ade5-40be-993e-05e95d2def1b"
 }
