@@ -55,6 +55,9 @@ generated/
 generator/config.local.json
 generator/.env
 generator/secrets/
+generator/last-generation.json
+generator/my-config.json
+generator/config.json
 *.generated.ps1
 RemoteGate-Final.ps1
 final-install.ps1

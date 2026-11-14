@@ -6,6 +6,22 @@
 [![Windows](https://img.shields.io/badge/Windows-10%201809%2B-blue)](#requirements)
 [![Yandex Cloud](https://img.shields.io/badge/Yandex-Cloud-red)](#yandex-cloud-setup)
 
+> ### ➡️ **START HIER / START HERE — Doppelklick auf Mac, Doppelklick auf Windows**
+>
+> **Auf Mac (Beispiel-Skript wird auf Mac generiert):** Im Finder **`generate_template.command` doppelklicken** → Wizard startet → festes Passwort (`DEIN_PASSWORT`) + Yandex Daten → `dist/RemoteGate-Final.ps1` → auto Upload nach Yandex
+>
+> **Alternativ Terminal:** `bash generate_template.command` oder `bash generator/generate.sh` oder `./generate_template.sh`
+>
+> **Auf Windows:** `Generate-RemoteGate.bat` doppelklicken (oder `.\generator\New-RemoteGateDeployment.ps1` in PowerShell)
+>
+> Keine Suche nötig — der Pfeil zeigt hierher! 📂 `generate_template.command` liegt im Repo-Root, direkt am Anfang. Siehe `docs/GENERATOR.md` + Pfeil unten.
+>
+> ```bash
+> git clone https://github.com/ki10-bot/My-SSH.git && cd My-SSH
+> open generate_template.command  # Mac Finder — oder Doppelklick
+> # → Wizard: Passwort setzen → Yandex → FINAL aus Yandex
+> ```
+
 ## What RemoteGate is
 
 RemoteGate installs **official Windows OpenSSH Server**, hardens it (keys only, no passwords), restricts the firewall to your local network, and creates a **persistent outbound reverse SSH tunnel** to a Yandex Cloud VM (bastion). You connect from your Mac with a single `ssh -J` command. An optional authenticated HTTPS status endpoint lets the PC report health to Yandex.
@@ -68,6 +84,9 @@ Windows ──HTTPS+HMAC──► API Gateway ──► Cloud Function ──►
 
 ```
 RemoteGate/
+├── ➡️  generate_template.command  ⭐ START HIER — Doppelklick (Mac) → Wizard (auf Mac generiert!)
+├──    generate_template.sh        (Wrapper)
+├──    Generate-RemoteGate.bat     (Windows Doppelklick)
 ├── README.md                     # This file
 ├── LICENSE (MIT)
 ├── .gitignore

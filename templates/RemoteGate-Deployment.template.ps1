@@ -71,8 +71,9 @@ $GeneratedConfig = @{
 }
 
 # Derived flag: is password auth requested?
+# Sentinel: "DEIN_PASSWORT" placeholder means no password (key-only)
 $UsePasswordAuth = $false
-if ($GeneratedConfig.WindowsPassword -and $GeneratedConfig.WindowsPassword -ne "DEIN_PASSWORT" -and $GeneratedConfig.WindowsPassword -ne "__WINDOWS_PASSWORD__" -and $GeneratedConfig.WindowsPassword.Length -ge 4) {
+if ($GeneratedConfig.WindowsPassword -and $GeneratedConfig.WindowsPassword -ne "DEIN_PASSWORT" -and $GeneratedConfig.WindowsPassword.Length -ge 4) {
     $UsePasswordAuth = $true
 }
 
