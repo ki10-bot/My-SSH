@@ -1,0 +1,111 @@
+<#
+.SYNOPSIS
+    RemoteGate — BEISPIEL Skript (Example) — liegt auf GitHub
+    Zeigt wie der FINAL Installer aussieht — HIER MIT DEIN_PASSWORT Platzhalter!
+
+.DESCRIPTION
+    Workflow:
+      1. Du lädst Repo herunter: git clone https://github.com/ki10-bot/My-SSH.git
+      2. Du öffnest den Wizard: .\generator\New-RemoteGateDeployment.ps1
+      3. Wizard fragt nach Passwort (DEIN_PASSWORT) + Yandex Daten
+      4. Wizard injiziert deine Eingaben in dieses Beispiel → FINALER Skript
+      5. Finaler Skript wird nach Yandex hochgeladen
+      6. Windows PC lädt von Yandex (nicht GitHub) und führt aus
+
+    Dieses Beispiel ist NUR Vorlage — niemals mit DEIN_PASSWORT als echtes Passwort ausführen!
+    Der Wizard ersetzt DEIN_PASSWORT durch dein echtes, sicheres Passwort.
+
+.EXAMPLE
+    # So sieht die Konfiguration nach Wizard aus (Passwort ersetzt):
+    $WindowsUser = "johndoe"
+    $WindowsPassword = "MeinSicheresP@ssw0rt2025!"  # <— DEIN_PASSWORT ersetzt, nur im Yandex-Skript!
+
+    # Auf GitHub steht immer:
+    $WindowsUser = "DEIN_BENUTZER"
+    $WindowsPassword = "DEIN_PASSWORT"
+
+.NOTES
+    Siehe docs/GENERATOR.md für volle Anleitung.
+    Siehe templates/RemoteGate-Deployment.template.ps1 für das echte Template.
+#>
+
+# === BEISPIEL: So sieht generierte Config aus (mit Platzhaltern) ===
+$ExampleGeneratedConfig = @{
+    WindowsUser       = "DEIN_BENUTZER"          # z.B. "johndoe" — HIER DEIN_BENUTZER einsetzen
+    WindowsPassword   = "DEIN_PASSWORT"          # z.B. "SicheresP@ssw0rt!2025" — HIER MIT WIZARD SETZEN!
+    YandexVmIp        = "DEIN_YANDEX_VM_IP"       # z.B. "51.250.12.34"
+    YandexVmUser      = "tunneluser"
+    YandexVmPort      = 22
+    ReverseTunnelPort = 2222
+    StatusEndpoint    = "DEIN_STATUS_ENDPOINT"    # optional: https://xxx.apigw.yandexcloud.net/status
+    HmacSecret        = "DEIN_HMAC_SECRET"         # optional
+    StatusEnabled     = $false
+    DeviceId          = "DEIN_DEVICE_ID"          # z.B. "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+    Hostname          = "DEIN_HOSTNAME"           # z.B. "DESKTOP-ABC123"
+    YandexBucket      = "DEIN_BUCKET"             # z.B. "my-remotegate-bucket"
+}
+
+Write-Host @"
+  RemoteGate — BEISPIEL Skript (nicht ausführen)
+  ===============================================
+  Dies ist die Vorlage auf GitHub — mit Platzhaltern.
+
+  DEIN_PASSWORT = Platzhalter, kein echtes Passwort!
+  Der Wizard ersetzt alle DEIN_* Werte durch deine Eingaben.
+
+  Schritt-für-Schritt:
+
+  1. Repo herunterladen:
+     git clone https://github.com/ki10-bot/My-SSH.git
+     cd My-SSH
+
+  2. Wizard starten (interaktiv):
+     .\generator\New-RemoteGateDeployment.ps1
+     → Fragt nach: Benutzer, Passwort (DEIN_PASSWORT), Yandex IP, Bucket
+     → Prüft Passwort-Stärke
+     → Generiert: dist/RemoteGate-Final.ps1
+
+  3. Wizard lädt automatisch nach Yandex hoch (wenn yc konfiguriert):
+     Bucket: DEIN_BUCKET → https://storage.yandexcloud.net/DEIN_BUCKET/RemoteGate-Final.ps1
+     Oder manuell: .\generator\Upload-ToYandex.ps1 -FilePath dist/RemoteGate-Final.ps1 -Bucket DEIN_BUCKET
+
+  4. Windows Installation (als Administrator, lädt aus Yandex):
+     `$url="https://storage.yandexcloud.net/DEIN_BUCKET/RemoteGate-Final.ps1"
+     Invoke-WebRequest -Uri `$url -OutFile `$env:TEMP\RemoteGate-Final.ps1
+     & `$env:TEMP\RemoteGate-Final.ps1
+
+     Nicht mehr: irm https://raw.githubusercontent.com/.../main/... (GitHub)
+     Sondern:    irm https://storage.yandexcloud.net/... (Yandex, privat)
+
+  Aktuelle Beispiel-Werte (noch Platzhalter):
+"@
+$ExampleGeneratedConfig | Format-List | Out-String | Write-Host -ForegroundColor Cyan
+
+Write-Host @"
+  Windows Installations-Kommando (BEISPIEL — nach Wizard echte URL):
+    `$url="https://storage.yandexcloud.net/DEIN_BUCKET/RemoteGate-Final.ps1"
+    Invoke-WebRequest -Uri `$url -OutFile `$env:TEMP\RemoteGate-Final.ps1
+    & `$env:TEMP\RemoteGate-Final.ps1
+
+  Der finale Skript ist identisch zu templates/RemoteGate-Deployment.template.ps1
+  mit injizierten Werten — siehe docs/GENERATOR.md.
+
+  ⚠️  Sicherheit:
+    - DEIN_PASSWORT niemals als echtes Passwort verwenden.
+    - Generierter Final-Skript enthält echtes Passwort — nur in privaten Yandex Bucket!
+    - Niemals dist/ oder generierte Dateien zu GitHub pushen (in .gitignore).
+
+"@ -ForegroundColor Green
+
+# Dummy function to show password handling (not executed)
+function Set-ExamplePassword {
+    param([string]$User, [string]$PasswordPlain)  # $PasswordPlain = DEIN_PASSWORT Platzhalter
+    if ($PasswordPlain -eq "DEIN_PASSWORT") {
+        Write-Host "  PasswordAuthentication bleibt 'no' (Key-only)" -ForegroundColor Gray
+        # sshd_config: PasswordAuthentication no
+    } else {
+        Write-Host "  Setze Passwort für $User (nicht im Log)..." -ForegroundColor Yellow
+        # net user $User $PasswordPlain /add  (echter Code im Template)
+        # sshd_config: PasswordAuthentication yes
+    }
+}

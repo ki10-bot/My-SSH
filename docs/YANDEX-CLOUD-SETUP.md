@@ -313,7 +313,38 @@ Register-ScheduledTask -TaskName RemoteGate-Status -TaskPath \RemoteGate\ -Actio
 
 ---
 
-## 5. Cost considerations
+## 5. Object Storage Bucket (for Yandex-hosted Windows Installer — NEW)
+
+For the new wizard flow (fixed password → Yandex URL → Windows), you need a **private Object Storage bucket** to host `RemoteGate-Final.ps1` (contains your password, so keep private!).
+
+**Via Console (quick):**
+```bash
+yc storage bucket create --name my-remotegate-bucket-uuid --default-storage-class standard
+# Make private (default): yc storage bucket update --name my-remotegate-bucket-uuid --acl private
+# IAM for wizard upload:
+yc iam service-account create --name remotegate-storage
+yc resource-manager folder add-access-binding --role storage.editor --subject serviceAccount:<id> --id <folder-id>
+yc iam access-key create --service-account-name remotegate-storage
+# Use keys in `aws configure` or `yc` (wizard's Upload-ToYandex.ps1 uses them)
+```
+
+**Via Terraform:**
+```bash
+cd cloud/storage
+terraform init && terraform apply -var="bucket_name=my-remotegate-bucket-uuid"
+terraform output bucket_url  # https://storage.yandexcloud.net/.../RemoteGate-Final.ps1
+```
+
+**Upload:** Wizard does it automatically (`.\generator\New-RemoteGateDeployment.ps1` → Step 4), or manually:
+```powershell
+.\generator\Upload-ToYandex.ps1 -FilePath dist/RemoteGate-Final.ps1 -Bucket my-remotegate-bucket-uuid
+# Private → generate presigned URL:
+aws s3 presign s3://my-remotegate-bucket-uuid/RemoteGate-Final.ps1 --endpoint-url https://storage.yandexcloud.net --expires-in 604800
+```
+
+Details: `docs/GENERATOR.md` and `cloud/storage/README.md`. Delete after install: `yc storage s3api delete-object --bucket <bucket> --key RemoteGate-Final.ps1`.
+
+## 6. Cost considerations
 
 | Resource | Approx. monthly cost (ru-central1, 2025) | Notes |
 |----------|------------------------------------------|-------|
@@ -321,6 +352,7 @@ Register-ScheduledTask -TaskName RemoteGate-Status -TaskPath \RemoteGate\ -Actio
 | VM preemptible | $2–5 | May be evicted, tunnel reconnects |
 | Cloud Function | Free tier 100k invocations, then ~ $0.10/100k | Status every 5 min = ~8.6k/mo |
 | API Gateway | Free tier generous |  |
+| Object Storage (installer) | ~ $0.01/mo for one script + requests | Bucket itself free, minimal storage/requests |
 | Egress (outbound SSH) | Minimal for shell sessions | Bulk transfers cost more |
 | Static public IP | Included with VM while attached | |
 
@@ -330,16 +362,17 @@ Docs: https://yandex.cloud/en/docs/billing/concepts/budget
 
 ---
 
-## 6. Resource cleanup
+## 7. Resource cleanup
 
 ### Console
 
 1. **Compute Cloud** → VM → **Delete** (releases public IP).
-2. **VPC** → Network → Delete (if created for project).
-3. **Cloud Functions** → Function → Delete.
-4. **API Gateway** → Gateway → Delete.
-5. **IAM** → Service accounts → Delete `remotegate-*`.
-6. **Billing** → Budgets → Keep or delete.
+2. **Object Storage** → Buckets → Delete `my-remotegate-bucket` (or remove object `RemoteGate-Final.ps1` if bucket shared).
+3. **VPC** → Network → Delete (if created for project).
+4. **Cloud Functions** → Function → Delete.
+5. **API Gateway** → Gateway → Delete.
+6. **IAM** → Service accounts → Delete `remotegate-*`.
+7. **Billing** → Budgets → Keep or delete.
 
 ### Terraform
 

@@ -31,7 +31,7 @@ Windows --HTTPS+HMAC--> API Gateway --> Cloud Function (status)
 - **Default:** Key-based only (`PasswordAuthentication no`, `PubkeyAuthentication yes`).
 - **Separate keys:** Mac→Windows and Windows→VM never reuse. Mac private key never on Windows, tunnel private key never on Mac.
 - **Host key verification:** `StrictHostKeyChecking yes` everywhere (Windows `known_hosts`, Mac `known_hosts`). **Never** disable for convenience (prohibited).
-- **No passwords in repo:** `DEIN_PASSWORT` is a placeholder meaning "your password" — never a real password. Keep password auth disabled.
+- **No passwords in repo:** `DEIN_PASSWORT` is a placeholder meaning "your password" — never a real password. Keep password auth disabled by default. **NEW:** Wizard allows fixed password (explicit opt-in) — generates private `dist/RemoteGate-Final.ps1` with real password, uploaded to **private** Yandex Object Storage bucket, never committed to GitHub (`.gitignore` covers `dist/`). See `docs/GENERATOR.md`. Use strong password (≥12 chars, complexity) and delete object after install.
 - **Hardened `sshd_config`:** `PermitRootLogin no`, `PermitEmptyPasswords no`, `MaxAuthTries 3`, `LoginGraceTime 60`, `ClientAliveInterval 30`.
 
 ### Port forwarding
@@ -42,12 +42,13 @@ Windows --HTTPS+HMAC--> API Gateway --> Cloud Function (status)
 
 ### Secrets management
 
-- **Never in Git:** Private keys (`*.pem`, `tunnel_ed25519`), HMAC secret, Yandex API keys, `.tfvars` are in `.gitignore`.
+- **Never in Git:** Private keys (`*.pem`, `tunnel_ed25519`), HMAC secret, Yandex API keys, `.tfvars` are in `.gitignore`. **NEW:** `dist/` with final installer (contains fixed password `DEIN_PASSWORT` → real) is also in `.gitignore` — only private Yandex bucket hosts it.
 - **Storage:**
   - Tunnel key: `C:\ProgramData\RemoteGate\keys\tunnel_ed25519` ACL: `SYSTEM`+`Administrators` only.
   - HMAC secret: ENV `REMOTEGATE_HMAC_SECRET` or file `hmac-secret.txt` ACL same; never logged.
+  - Fixed password (NEW): Injected by wizard into `dist/RemoteGate-Final.ps1`, stored only in **private** Yandex Object Storage bucket (ACL private, presigned URLs 7 days). Not in GitHub. Wizard redacts in logs (`***REDACTED***`) and `last-generation.json` never saves plain password.
   - On VM: `authorized_keys` perms `0600`, owner `tunneluser`.
-- **Do not log secrets:** Scripts avoid `Write-Host $secret`; logs show only truncated fingerprints.
+- **Do not log secrets:** Scripts avoid `Write-Host $secret`; logs show only truncated fingerprints. Final template redacts password in `Write-InstallLog`.
 
 ### HTTPS & input validation
 

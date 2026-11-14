@@ -48,3 +48,13 @@ TestResults.xml
 
 # Yandex CLI
 .yc/
+
+# RemoteGate generator outputs — contain real passwords/keys, never commit!
+dist/
+generated/
+generator/config.local.json
+generator/.env
+generator/secrets/
+*.generated.ps1
+RemoteGate-Final.ps1
+final-install.ps1

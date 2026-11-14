@@ -1,4 +1,25 @@
-# RemoteGate — Installation Guide
+# RemoteGate — Installation Guide — Zwei Wege
+
+> **Weg A (empfohlen, deine 8 Schritte):** Wizard → festes Passwort (DEIN_PASSWORT) → Yandex Upload → Windows lädt aus Yandex (siehe `docs/GENERATOR.md`).
+> **Weg B (klassisch):** GitHub → Windows (key-only, manuelle config.json) — hier beschrieben.
+>
+> Beide Wege installieren identische Windows-Komponenten — nur die Quelle unterscheidet sich.
+
+## Weg A — Wizard + Yandex (empfohlen)
+
+Siehe `docs/GENERATOR.md` — komplette Anleitung (Repo herunterladen → Wizard → Passwort setzen → Yandex Upload → Windows aus Yandex installieren).
+
+Kurz:
+```powershell
+git clone https://github.com/ki10-bot/My-SSH.git; cd My-SSH
+.\generator\New-RemoteGateDeployment.ps1  # Passwort + Yandex IP/Bucket → dist/RemoteGate-Final.ps1 → auto Upload
+# Windows (aus Yandex, nicht GitHub):
+$url="https://storage.yandexcloud.net/<bucket>/RemoteGate-Final.ps1"; iwr $url -OutFile $env:TEMP\RemoteGate-Final.ps1; & $env:TEMP\RemoteGate-Final.ps1
+```
+
+Vorteil: Kein manuelles `config.json` Edit, Passwort vor-konfiguriert, Quelle Yandex (privat).
+
+## Weg B — Klassisch: Direkt aus GitHub (hier detailliert)
 
 > For a technically interested beginner. Every command is explained.
 
@@ -9,7 +30,7 @@
 - **Internet** access to `github.com` (HTTPS) and your Yandex VM (outbound SSH)
 - **Yandex VM** created first (see `docs/YANDEX-CLOUD-SETUP.md`) — or install SSH-only and configure VM later
 
-## Quick start (one command)
+## Quick start (one command, klassisch)
 
 1. On Windows, open **PowerShell as Administrator**:
    - Press `Win + X` → **Windows PowerShell (Admin)** / **Terminal (Admin)**

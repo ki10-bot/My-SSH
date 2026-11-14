@@ -83,11 +83,22 @@ RemoteGate/
 │   ├── RemoteGate-Agent.ps1      # Health check / auto-repair
 │   ├── RemoteGate-Tunnel.ps1     # Persistent tunnel manager
 │   └── RemoteGate-Status.ps1     # HMAC status reporter
+├── generator/                  # ⭐ NEW: Wizard for fixed password + Yandex upload
+│   ├── New-RemoteGateDeployment.ps1  # Interactive wizard (DEIN_PASSWORT → dein PW)
+│   ├── Upload-ToYandex.ps1           # S3 upload to Object Storage (yc/aws)
+│   ├── Example-Install.ps1.example   # Example (DEIN_PASSWORT Platzhalter)
+│   ├── Example-Config.json.example   # Prefill für -NonInteractive
+│   └── README.md
+├── templates/
+│   └── RemoteGate-Deployment.template.ps1  # FINAL template (Platzhalter DEIN_PASSWORT etc.)
+├── dist/                         # Generierter FINAL (privat, nicht committen! .gitignore)
+│   └── RemoteGate-Final.ps1      # Aus Yandex herunterladen, nicht GitHub
 ├── cloud/
 │   ├── vm/setup.sh               # VM hardening script
 │   ├── vm/cloud-init.yaml
 │   ├── functions/index.js        # HMAC status endpoint
 │   ├── gateway/spec.yaml         # OpenAPI 3.0 + Yandex extension
+│   ├── storage/                  # ⭐ NEW: Object Storage bucket (für Yandex Installer)
 │   └── infrastructure/           # Terraform (VPC, VM, Function, Gateway)
 ├── mac/
 │   ├── setup-keys.sh             # Generates Mac→Windows key
@@ -95,7 +106,8 @@ RemoteGate/
 │   └── ssh-config.example        # ~/.ssh/config snippet
 ├── config/config.example.json
 ├── docs/
-│   ├── INSTALLATION.md           # One-command install
+│   ├── GENERATOR.md              # ⭐ NEW: Wizard & Yandex Upload Guide (deine 8 Schritte)
+│   ├── INSTALLATION.md           # Installation (GitHub vs Yandex)
 │   ├── YANDEX-CLOUD-SETUP.md     # Account/VM/Function/Gateway + regions/restrictions
 │   ├── MAC-CONNECTION.md         # ssh -J guide + host keys
 │   ├── SECURITY.md               # Threat model, threat table, audit checklist
@@ -108,26 +120,77 @@ RemoteGate/
     └── integration/TEST-PLAN.md  # 15-test checklist
 ```
 
-## Installation
+## Installation — zwei Wege (neu: mit festem Passwort & Yandex Hosting)
 
-> Full guide: `docs/INSTALLATION.md` + `docs/YANDEX-CLOUD-SETUP.md` (VM creation first).
+> **Empfohlen (deine 8 Schritte):** Wizard → festes Passwort (`DEIN_PASSWORT` → dein PW) → Upload nach Yandex Object Storage → Windows lädt aus Yandex (privat, kein GitHub).
+> **Alternativ (klassisch):** Direkt aus GitHub (nur Keys, `DEIN_PASSWORT` Platzhalter, manuelle `config.json`).
+> Full guides: `docs/GENERATOR.md` (Wizard) + `docs/INSTALLATION.md` (klassisch) + `docs/YANDEX-CLOUD-SETUP.md`.
 
-### 1. Create Yandex VM (one-time)
+### Weg A — ⭐ Empfohlen: Mit festem Passwort & Yandex Upload (dein Wunsch)
 
-See `docs/YANDEX-CLOUD-SETUP.md` for console / CLI / Terraform steps. Summary:
+**1. Repo herunterladen + Wizard starten (auf Admin-PC, wo du Repo hast):**
+
+```powershell
+git clone https://github.com/ki10-bot/My-SSH.git
+cd My-SSH
+.\generator\New-RemoteGateDeployment.ps1
+# Folgt Prompts:
+# - Windows Benutzername (DEIN_BENUTZER → dein User)
+# - Festes Passwort (DEIN_PASSWORT → dein sicheres PW, verdeckt + Bestätigung)
+# - Yandex VM IP (DEIN_YANDEX_VM_IP → 51.250.12.34)
+# - Bucket Name (DEIN_BUCKET → my-remotegate-bucket)
+# → Generiert: dist/RemoteGate-Final.ps1 (privat, nicht committen!)
+# → Auto-Upload zu Yandex Object Storage (wenn yc konfiguriert)
+# → Gibt Windows Installations-Kommando (Yandex URL) aus
+```
+
+Wizard Schritte: `docs/GENERATOR.md` (inkl. Passwort-Stärke ≥12 Zeichen, Upload via yc/aws, presigned URLs für privaten Bucket).
+
+**2. Yandex VM (einmalig) — vorher oder nachher:**
 
 ```bash
-# After yc init:
+# Nach yc init:
 yc compute instance create --name remotegate-bastion --zone ru-central1-a \
   --memory 2 --cores 2 --core-fraction 20 \
   --create-boot-disk image-folder-id=standard-images,image-family=ubuntu-2204-lts,size=20,type=network-hdd \
   --network-interface subnet-name=default-ru-central1-a,nat-ip-version=ipv4 \
   --ssh-key ~/.ssh/remotegate_mac.pub
-# Then on VM: sudo bash cloud/vm/setup.sh
-# Add Windows tunnel pubkey to /home/tunneluser/.ssh/authorized_keys
+# Dann auf VM: sudo bash cloud/vm/setup.sh
+# Bucket für Windows Installer (falls nicht via Wizard):
+cd cloud/storage && terraform init && terraform apply -var="bucket_name=my-remotegate-bucket"
 ```
 
-### 2. Install on Windows (one command)
+**3. Auf Windows (als Administrator) — aus Yandex (nicht GitHub!):**
+
+```powershell
+# Vom Wizard ausgegebenes Kommando (Yandex URL, nicht GitHub raw):
+$url="https://storage.yandexcloud.net/my-remotegate-bucket/RemoteGate-Final.ps1"
+# Falls privat: nutze presigned URL vom Wizard (gültig 7 Tage):
+# $url="https://storage.yandexcloud.net/...?X-Amz-Signature=..."
+
+Invoke-WebRequest -Uri $url -OutFile $env:TEMP\RemoteGate-Final.ps1
+# Optional: Hash prüfen
+Get-FileHash $env:TEMP\RemoteGate-Final.ps1 -Algorithm SHA256
+& $env:TEMP\RemoteGate-Final.ps1
+
+# Der finale Skript (templates/RemoteGate-Deployment.template.ps1 mit deinen Werten):
+# - Prüft Windows Build, Admin
+# - Setzt festes Passwort (wenn gesetzt) → PasswordAuthentication yes + net user
+# - Schreibt config.json (Yandex IP etc. — kein manuelles Edit nötig)
+# - Installiert OpenSSH, Firewall LocalSubnet, Tunnel Key + Task
+# - Startet Tunnel automatisch
+```
+
+Verifizieren:
+
+```powershell
+Get-Content C:\ProgramData\RemoteGate\logs\tunnel.log -Tail 20
+Get-Service sshd; Get-ScheduledTask -TaskName RemoteGate-Tunnel -TaskPath \RemoteGate\
+# Passwort-Login testen: ssh johndoe@<WINDOWS_LAN_IP>  → dein festes PW
+# Oder: ssh -J rgadmin@<VM_IP> -p 2222 johndoe@127.0.0.1
+```
+
+### Weg B — Klassisch: Direkt aus GitHub (nur Keys, manuelle config.json)
 
 Open **PowerShell as Administrator** (Win+X → Terminal (Admin) → Yes on UAC):
 
@@ -142,33 +205,15 @@ Get-FileHash $env:TEMP\Bootstrap.ps1 -Algorithm SHA256
 iex (irm https://raw.githubusercontent.com/ki10-bot/My-SSH/main/installer/Bootstrap.ps1)
 ```
 
-The installer is **idempotent**. Re-running is safe. It:
-1. Checks Windows build ≥17763
-2. Checks admin
-3. Creates `C:\ProgramData\RemoteGate\` + device ID + placeholder config
-4. Installs OpenSSH Server, starts `sshd` (Automatic), hardens `sshd_config`
-5. Restricts firewall to `LocalSubnet`
-6. Generates tunnel key + task `\RemoteGate\RemoteGate-Tunnel`
-7. Verifies
-
-Edit config:
+Der klassische Installer ist **idempotent**, manuelle `config.json` nötig:
 
 ```powershell
 notepad C:\ProgramData\RemoteGate\config\config.json
 # Set yandex.vmPublicIp, yandex.vmUser, ssh.windowsUser
-
 cat C:\ProgramData\RemoteGate\keys\tunnel_ed25519.pub
 # Paste to Yandex VM: /home/tunneluser/.ssh/authorized_keys
-
 ssh-keyscan -p 22 <VM_IP> >> C:\ProgramData\RemoteGate\config\ssh\known_hosts
 Start-ScheduledTask -TaskName RemoteGate-Tunnel -TaskPath \RemoteGate\
-```
-
-Verify:
-
-```powershell
-.\installer\Verify-Installation.ps1
-Get-Content C:\ProgramData\RemoteGate\logs\tunnel.log -Tail 20
 ```
 
 ### 3. Connect from Mac
