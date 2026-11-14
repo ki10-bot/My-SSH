@@ -1,6 +1,6 @@
 # RemoteGate — Secure Windows Remote Administration via Cloud.ru (Free Tier)
 
-> **Owner's setup:** MacBook (macOS, SSH via Terminal) controls one owned Windows 10 PC via **Tailscale (0 ₽, keine Karte)** — Standard. Cloud.ru/Yandex/Cloudflare weiter möglich.
+> **Owner's setup:** MacBook (macOS, SSH via Terminal) controls one owned Windows 10 PC via **Relay ssh-j.com (0 ₽, nur SSH, keine Extra-Software)** — Standard. VM/Tailscale/Cloudflare weiter möglich.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](#license)
 [![Windows](https://img.shields.io/badge/Windows-10%201809%2B-blue)](#requirements)
@@ -8,20 +8,21 @@
 
 > ### ➡️ **START HIER / START HERE — Doppelklick auf Mac, Doppelklick auf Windows**
 >
-> **Auf Mac:** Im Finder **`generate_template.command` doppelklicken** → Wizard → Passwort → `dist/RemoteGate-Final.ps1`
-> **Standard: Tailscale (0 ₽, keine Karte, keine Domain)** — siehe `docs/EINFACH.md` + `docs/TAILSCALE-GUIDE.md`
+> **Auf Mac:** Im Finder **`generate_template.command` doppelklicken** → Wizard → Passwort + Relay-Namen → `dist/RemoteGate-Final.ps1`
+> **Standard: Relay ssh-j.com (0 ₽, keine Karte, nur SSH, keine Extra-Software)** — siehe `docs/EINFACH.md`
+> Tailscale/Cloudflare/VM weiter als Optionen [2]/[3]/[4] — siehe `docs/TAILSCALE-GUIDE.md`
 > **Alternativ Terminal:** `bash generate_template.command` oder `bash generator/generate.sh`
 > **Auf Windows:** `Generate-RemoteGate.bat` doppelklicken (oder `.\generator\New-RemoteGateDeployment.ps1` in PowerShell)
 >
 > ```bash
 > git clone https://github.com/ki10-bot/My-SSH.git && cd My-SSH
 > open generate_template.command  # Mac Finder — oder Doppelklick
-> # → Wizard [1] Tailscale (0 ₽, keine Karte) → FINAL → ssh 100.x.x.x  [2] Cloudflare Domain
+> # → Wizard [1] Relay ssh-j.com (0 ₽, nur SSH, keine Extra-Software) → FINAL → ssh -J user@ssh-j.com device  [2] VM feste IP  [3] Tailscale  [4] Cloudflare
 > ```
 
 ## What RemoteGate is
 
-RemoteGate installs **official Windows OpenSSH Server**, hardens it (keys only, no passwords), restricts the firewall to your local network, and creates a **persistent outbound reverse SSH tunnel** to a Cloud.ru Evolution VM (bastion, Free Tier). You connect from your Mac with a single `ssh -J` command. An optional authenticated HTTPS status endpoint lets the PC report health to Yandex.
+RemoteGate installs **official Windows OpenSSH Server**, hardens it (keys only, no passwords), restricts the firewall to your local network, and creates a **persistent outbound reverse SSH tunnel** to a free public relay (**ssh-j.com**, 0 ₽, nur SSH) or a Cloud.ru Evolution VM (bastion, Free Tier). You connect from your Mac with `ssh -J relay@ssh-j.com device` or `ssh -J bastion`. An optional authenticated HTTPS status endpoint lets the PC report health to Yandex.
 
 ## What it does
 

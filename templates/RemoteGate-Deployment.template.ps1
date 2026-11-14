@@ -77,6 +77,11 @@ $GeneratedConfig = @{
     # Tailscale (Option C: 0 ₽, keine Karte, keine Domain) — einfachste
     TailscaleAuthKey      = "__TAILSCALE_AUTHKEY__"
 
+    # Relay ssh-j.com (0 ₽, keine Karte, nur SSH — keine Extra-Software) ★ für dich
+    RelayHost             = "__RELAY_HOST__"
+    RelayUser             = "__RELAY_USER__"
+    RelayDevice           = "__RELAY_DEVICE__"
+
     # Wizard metadata
     GenerationTime  = "__GENERATION_TIME__"
     GeneratorVersion = "1.0.0"
@@ -184,7 +189,9 @@ if ($GeneratedConfig.WindowsUser -match "__WINDOWS_USER__|REPLACE|DEIN_BENUTZER|
         Write-Host "  → Fallback: $env:USERNAME" -ForegroundColor Yellow
     }
 }
-if ($IsTailscaleMode -or $IsCloudflareMode) {
+if ($IsRelayMode) {
+    Write-InstallLog "Relay Modus $($GeneratedConfig.RelayHost) — keine VM IP nötig" "INFO"
+} elseif ($IsTailscaleMode -or $IsCloudflareMode) {
     Write-InstallLog "Tunnel Modus $CloudProvider — keine VM IP nötig" "INFO"
 } elseif ($GeneratedConfig.YandexVmIp -match "__YANDEX_VM_IP__|REPLACE|DEIN_YANDEX|CLOUDFLARE_MODE" -or -not $GeneratedConfig.YandexVmIp) {
     Write-InstallLog "YandexVmIp Platzhalter — Tunnel startet nicht bis IP gesetzt." "WARN"
@@ -192,7 +199,7 @@ if ($IsTailscaleMode -or $IsCloudflareMode) {
         Write-Host "WARNUNG: VM IP Platzhalter — nur lokales SSH." -ForegroundColor Yellow
     }
 }
-Write-InstallLog "Config validiert: User=$($GeneratedConfig.WindowsUser) Mode=$(if($IsTailscaleMode){"tailscale"}elseif($IsCloudflareMode){"cloudflare"}else{"bastion"}) PassAuth=$UsePasswordAuth"
+Write-InstallLog "Config validiert: User=$($GeneratedConfig.WindowsUser) Mode=$(if($IsRelayMode){"relay"}elseif($IsTailscaleMode){"tailscale"}elseif($IsCloudflareMode){"cloudflare"}else{"bastion"}) PassAuth=$UsePasswordAuth"
 
 # === Create directories ===
 Write-Step "Erstelle RemoteGate Verzeichnisse"
@@ -477,7 +484,13 @@ try {
 # === Mode detection ===
 $IsCloudflareMode = $false
 $IsTailscaleMode = $false
-if ($GeneratedConfig.TailscaleAuthKey -and $GeneratedConfig.TailscaleAuthKey.Length -gt 5 -and $GeneratedConfig.TailscaleAuthKey -notmatch "__TAILSCALE" -and $GeneratedConfig.CloudProvider -eq "tailscale") {
+$IsRelayMode = $false
+if ($GeneratedConfig.CloudProvider -eq "relay" -and $GeneratedConfig.RelayHost -and $GeneratedConfig.RelayHost -notmatch "__RELAY") {
+    $IsRelayMode = $true
+    Write-InstallLog "Relay Mode $($GeneratedConfig.RelayHost) — $($GeneratedConfig.RelayUser)@$($GeneratedConfig.RelayHost) device $($GeneratedConfig.RelayDevice)"
+    Write-Host "`n  🔗 Relay Modus ssh-j.com (0 ₽, keine Karte, nur SSH — keine Extra-Software) ★" -ForegroundColor Cyan
+    Write-Host "     Relay: $($GeneratedConfig.RelayUser)@$($GeneratedConfig.RelayHost) device $($GeneratedConfig.RelayDevice):22 → localhost:22" -ForegroundColor White
+} elseif ($GeneratedConfig.TailscaleAuthKey -and $GeneratedConfig.TailscaleAuthKey.Length -gt 5 -and $GeneratedConfig.TailscaleAuthKey -notmatch "__TAILSCALE" -and $GeneratedConfig.CloudProvider -eq "tailscale") {
     $IsTailscaleMode = $true
     Write-InstallLog "Tailscale Mode (0 ₽, keine Karte)"
     Write-Host "`n  🔒 Tailscale Modus (kostenlos, keine Karte, keine Domain)" -ForegroundColor Cyan
@@ -488,7 +501,88 @@ if ($GeneratedConfig.TailscaleAuthKey -and $GeneratedConfig.TailscaleAuthKey.Len
     Write-Host "     Hostname: $($GeneratedConfig.CloudflareHostname) → localhost:22" -ForegroundColor White
 }
 
-if ($IsTailscaleMode) {
+if ($IsRelayMode) {
+    Write-Step "Konfiguriere Relay ssh-j.com (0 ₽, nur SSH — keine Extra-Software)"
+    $relayHost = $GeneratedConfig.RelayHost.Trim()
+    $relayUser = $GeneratedConfig.RelayUser.Trim()
+    $relayDevice = $GeneratedConfig.RelayDevice.Trim()
+    if (-not $relayDevice) { $relayDevice = $env:COMPUTERNAME }
+    Write-Host "  Relay: $relayUser@$relayHost  device $relayDevice:22 → localhost:22" -ForegroundColor White
+    Write-Host "  Keine Extra-Software — nur OpenSSH (bereits installiert)" -ForegroundColor Green
+    # Wir nutzen gleichen Scheduled-Task-Mechanismus wie VM-Modus, aber mit anderer -R Syntax
+    # Erzeuge config für Runner
+    $relayConfig = @{ host = $relayHost; user = $relayUser; device = $relayDevice }
+    $relayConfig | ConvertTo-Json | Set-Content -Path "$RemoteGateRoot\config\relay.json" -Encoding UTF8
+    # SSH known_hosts für Relay
+    $sshCfgDir = "$RemoteGateRoot\config\ssh"
+    if (-not (Test-Path $sshCfgDir)) { New-Item -ItemType Directory -Path $sshCfgDir -Force | Out-Null }
+    $knownHosts = "$sshCfgDir\known_hosts"
+    if (-not (Test-Path $knownHosts)) { New-Item -ItemType File -Path $knownHosts -Force | Out-Null }
+    try {
+        $scan = & "C:\Windows\System32\OpenSSH\ssh-keyscan.exe" $relayHost 2>$null
+        if ($scan) { Add-Content -Path $knownHosts -Value $scan -Encoding UTF8; Write-InstallLog "ssh-keyscan $relayHost ok" }
+    } catch { Write-InstallLog "ssh-keyscan $relayHost fail: $_" "WARN" }
+    # Erstelle Scheduled Task identisch zu VM, aber Runner liest relay.json
+    $taskName = "RemoteGate-Tunnel"
+    $taskPath = "\RemoteGate\"
+    $binDir = "$RemoteGateRoot\bin"
+    if (-not (Test-Path $binDir)) { New-Item -ItemType Directory -Path $binDir -Force | Out-Null }
+    $tunnelScript = "$binDir\RemoteGate-Tunnel.ps1"
+    $runner = @'
+param([string]$RemoteGateRoot="C:\ProgramData\RemoteGate")
+Set-StrictMode -Version Latest
+$ErrorActionPreference="Continue"
+$LogPath="$RemoteGateRoot\logs\tunnel.log"
+$ConfigPath="$RemoteGateRoot\config\config.json"
+$RelayPath="$RemoteGateRoot\config\relay.json"
+$MutexName="Global\RemoteGate-Tunnel-Mutex"
+function WL{param($m,$l="INFO") $ts=Get-Date -Format "yyyy-MM-dd HH:mm:ss"; $line="[$ts] [$l] $m"; Write-Host $line; try{Add-Content $LogPath $line -Encoding UTF8}catch{}}
+WL "Relay tunnel start PID $PID"
+$mutex=$null; $hasMutex=$false
+try{ $mutex=New-Object System.Threading.Mutex($false,$MutexName); $hasMutex=$mutex.WaitOne(1000,$false); if(-not $hasMutex){WL "Andere Instanz läuft — exit" "WARN"; exit 0}}catch{}
+try{
+  $cfg=Get-Content $ConfigPath -Raw | ConvertFrom-Json
+  $relay=Get-Content $RelayPath -Raw | ConvertFrom-Json
+  $relayHost=$relay.host; $relayUser=$relay.user; $relayDevice=$relay.device
+  if(-not $relayHost -or $relayHost -match "REPLACE"){ WL "relayHost Platzhalter — Abbruch" "ERROR"; if($mutex -and $hasMutex){$mutex.ReleaseMutex()|Out-Null} exit 1}
+  $knownHosts="$RemoteGateRoot\config\ssh\known_hosts"
+  $sshExe=(Get-Command ssh -ErrorAction SilentlyContinue).Source; if(-not $sshExe){$sshExe="C:\Windows\System32\OpenSSH\ssh.exe"}
+  # ssh-j.com Syntax: ssh -N -R device:22:localhost:22 user@host
+  $sshArgs=@("-N","-R","${relayDevice}:22:localhost:22","-o","ServerAliveInterval=30","-o","ServerAliveCountMax=3","-o","ExitOnForwardFailure=yes","-o","StrictHostKeyChecking=yes","-o","UserKnownHostsFile=$knownHosts","-o","BatchMode=yes","${relayUser}@${relayHost}")
+  WL "Relay: $relayUser@$relayHost device $relayDevice:22 -> 127.0.0.1:22"
+  $iter=0; $fails=0
+  while($true){
+    $iter++
+    $sshd=Get-Service sshd -ErrorAction SilentlyContinue; if(-not $sshd -or $sshd.Status -ne "Running"){WL "sshd nicht laufend — warte 10s" "WARN"; Start-Sleep 10; continue}
+    WL "Verbinde Versuch $iter (fails $fails)..."
+    $psi=New-Object System.Diagnostics.ProcessStartInfo; $psi.FileName=$sshExe; $psi.Arguments=($sshArgs|%{if($_ -match "[\s`"']"){"`"`"$_`"`""}else{$_}})-join " "; $psi.UseShellExecute=$false; $psi.RedirectStandardError=$true; $psi.RedirectStandardOutput=$true; $psi.CreateNoWindow=$true
+    $proc=New-Object System.Diagnostics.Process; $proc.StartInfo=$psi; $started=$proc.Start(); if(-not $started){WL "ssh start fail" "ERROR"; $fails++; Start-Sleep 10; continue}
+    WL "ssh PID $($proc.Id) gestartet"
+    while(-not $proc.HasExited){ Start-Sleep 5 }
+    $ec=$proc.ExitCode; try{$se=$proc.StandardError.ReadToEnd()}catch{$se=""}; WL "ssh exit $ec $se" "WARN"; $fails++
+    $backoff=[math]::Min(10 * [math]::Pow(1.5,[math]::Min($fails,8)),300); $wait=[int]($backoff + (Get-Random -Min 0 -Max 5)); WL "Reconnect in ${wait}s" "INFO"; Start-Sleep $wait
+  }
+} finally {
+  WL "Exit"
+  if($mutex -and $hasMutex){try{$mutex.ReleaseMutex()|Out-Null}catch{}; $mutex.Dispose()}
+}
+'@
+    Set-Content -Path $tunnelScript -Value $runner -Encoding UTF8
+    $psExe = "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+    if (Test-Path "C:\Program Files\PowerShell\7\pwsh.exe") { $psExe = "C:\Program Files\PowerShell\7\pwsh.exe" }
+    $action = New-ScheduledTaskAction -Execute $psExe -Argument "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$tunnelScript`""
+    $triggerStartup = New-ScheduledTaskTrigger -AtStartup
+    $triggerLogon = New-ScheduledTaskTrigger -AtLogOn
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -RestartCount 10 -RestartInterval (New-TimeSpan -Minutes 1) -ExecutionTimeLimit 0 -MultipleInstances IgnoreNew
+    $principal = New-ScheduledTaskPrincipal -UserId "NT AUTHORITY\SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+    $existing = Get-ScheduledTask -TaskName $taskName -TaskPath $taskPath -ErrorAction SilentlyContinue
+    if ($existing) { Unregister-ScheduledTask -TaskName $taskName -TaskPath $taskPath -Confirm:$false }
+    try { Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue | Unregister-ScheduledTask -Confirm:$false -ErrorAction SilentlyContinue } catch {}
+    Register-ScheduledTask -TaskName $taskName -TaskPath $taskPath -Action $action -Trigger @($triggerStartup,$triggerLogon) -Settings $settings -Principal $principal -Description "RemoteGate Relay ssh-j.com — $($GeneratedConfig.DeviceId)" | Out-Null
+    Write-InstallLog "Relay Task registriert: $taskPath$taskName"
+    Write-Host "  Task: $taskPath$taskName (SYSTEM, Startup+Logon)" -ForegroundColor Green
+    try { Start-ScheduledTask -TaskName $taskName -TaskPath $taskPath -ErrorAction Stop; Write-Host "  Relay Task gestartet." -ForegroundColor Green; Start-Sleep 2; $info = Get-ScheduledTaskInfo -TaskName $taskName -TaskPath $taskPath; Write-InstallLog "Task LastRun $($info.LastRunTime) Result $($info.LastTaskResult)" } catch { Write-InstallLog "Task Start: $_" "WARN"; Write-Host "  Task Start Fehler: $_" -ForegroundColor Yellow }
+} elseif ($IsTailscaleMode) {
     Write-Step "Installiere Tailscale (keine Karte, keine Domain)"
     $tailscaleUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-latest.exe"
     $tailscaleExe = "$env:TEMP\tailscale-setup.exe"
@@ -729,12 +823,19 @@ try {
     $rule = Get-NetFirewallRule -DisplayName "OpenSSH-Server-In-TCP" -ErrorAction SilentlyContinue
     if ($rule) { $addr=(Get-NetFirewallAddressFilter -AssociatedNetFirewallRule $rule).RemoteAddress; Write-Host "  Firewall: $($rule.DisplayName) → $addr" -ForegroundColor Green }
     if ($UsePasswordAuth) { Write-Host "  Passwort-Auth: AKTIV für $($GeneratedConfig.WindowsUser)" -ForegroundColor Cyan } else { Write-Host "  Passwort-Auth: DEAKTIVIERT (Key-only)" -ForegroundColor Cyan }
-    Get-ScheduledTask -TaskName $taskName -TaskPath $taskPath -ErrorAction SilentlyContinue | Select TaskName,State | Format-List | Out-String | Write-Host
+    if ($IsRelayMode) { Get-ScheduledTask -TaskName "RemoteGate-Tunnel" -TaskPath "\RemoteGate\" -ErrorAction SilentlyContinue | Select TaskName,State | Format-List | Out-String | Write-Host }
+    elseif ($IsTailscaleMode) { Get-Service Tailscale -ErrorAction SilentlyContinue | Format-List | Out-String | Write-Host }
+    elseif ($IsCloudflareMode) { Get-Service cloudflared -ErrorAction SilentlyContinue | Format-List | Out-String | Write-Host }
+    else { Get-ScheduledTask -TaskName $taskName -TaskPath $taskPath -ErrorAction SilentlyContinue | Select TaskName,State | Format-List | Out-String | Write-Host }
 } catch { Write-InstallLog "Verify: $_" "WARN" }
 
 # === Summary ===
 Write-Host "`n════════════════════════════════════════════════════════════" -ForegroundColor Cyan
-if ($IsCloudflareMode) {
+if ($IsRelayMode) {
+    Write-Host "  ✅ RemoteGate Installation abgeschlossen (Relay ssh-j.com, 0 ₽, nur SSH)" -ForegroundColor Cyan
+} elseif ($IsTailscaleMode) {
+    Write-Host "  ✅ RemoteGate Installation abgeschlossen (Tailscale, 0 ₽)" -ForegroundColor Cyan
+} elseif ($IsCloudflareMode) {
     Write-Host "  ✅ RemoteGate Installation abgeschlossen (Cloudflare Tunnel, 0 ₽)" -ForegroundColor Cyan
 } else {
     Write-Host "  ✅ RemoteGate Installation abgeschlossen (Final aus Cloud, VM-Modus)" -ForegroundColor Cyan
@@ -745,7 +846,15 @@ Write-Host "  WindowsUser:  $($GeneratedConfig.WindowsUser)" -ForegroundColor Wh
 Write-Host "  Passwort-Auth: $(if($UsePasswordAuth){"AKTIV — SSH Login mit Passwort möglich"}else{"DEAKTIVIERT — nur Key-Auth (sicherer)"})" -ForegroundColor $(if($UsePasswordAuth){"Yellow"}else{"Gray"})
 Write-Host "  Config:       $configDest" -ForegroundColor White
 Write-Host "  Logs:         $LogFile" -ForegroundColor White
-if ($IsCloudflareMode) {
+if ($IsRelayMode) {
+    Write-Host "  Relay:        $($GeneratedConfig.RelayUser)@$($GeneratedConfig.RelayHost) device $($GeneratedConfig.RelayDevice):22 → localhost:22" -ForegroundColor Green
+    Write-Host "  Relay Host:   ssh-j.com — wähle eigenen Nutzernamen + Gerätenamen (50 Geräte pro Name)" -ForegroundColor White
+    Write-Host "  Task:         \RemoteGate\RemoteGate-Tunnel (SYSTEM, sichtbar)" -ForegroundColor White
+    Write-Host "  Tunnel Log:   $RemoteGateRoot\logs\tunnel.log" -ForegroundColor White
+} elseif ($IsTailscaleMode) {
+    Write-Host "  Tailscale:    tailscale ip -4 zeigt 100.x Adresse" -ForegroundColor Green
+    Write-Host "  Task:         — (Tailscale Service)" -ForegroundColor White
+} elseif ($IsCloudflareMode) {
     Write-Host "  Cloudflare:   $($GeneratedConfig.CloudflareHostname) → localhost:22 (Tunnel $($GeneratedConfig.CloudflareTunnelName))" -ForegroundColor Green
     Write-Host "  Tunnel Bin:   $binDir\cloudflared.exe" -ForegroundColor White
     Write-Host "  Service:      cloudflared (SYSTEM)" -ForegroundColor White
@@ -757,12 +866,22 @@ if ($IsCloudflareMode) {
 }
 Write-Host ""
 Write-Host "  Nächste Schritte:" -ForegroundColor Yellow
-if ($IsCloudflareMode) {
+if ($IsRelayMode) {
+    Write-Host "    1. Windows baut Tunnel auf: ssh -R $($GeneratedConfig.RelayDevice):22:localhost:22 $($GeneratedConfig.RelayUser)@ssh-j.com" -ForegroundColor White
+    Write-Host "    2. Mac: ssh -J $($GeneratedConfig.RelayUser)@ssh-j.com $($GeneratedConfig.RelayDevice)" -ForegroundColor Cyan
+    Write-Host "       dann: ssh $($GeneratedConfig.WindowsUser)@$($GeneratedConfig.RelayDevice) (über Jump)" -ForegroundColor White
+    Write-Host "       Kurz: ssh -J $($GeneratedConfig.RelayUser)@ssh-j.com $($GeneratedConfig.WindowsUser)@$($GeneratedConfig.RelayDevice)" -ForegroundColor Green
+    Write-Host "       Passwort: dein festgelegtes" -ForegroundColor White
+    Write-Host "    3. Prüfe: ssh $($GeneratedConfig.RelayUser)@ssh-j.com -> zeige Geräte, oder Get-ScheduledTask" -ForegroundColor DarkGray
+} elseif ($IsCloudflareMode) {
     Write-Host "    1. Cloudflare Dashboard → Zero Trust → Tunnels → $($GeneratedConfig.CloudflareTunnelName) sollte Healthy (grün) sein" -ForegroundColor White
     Write-Host "    2. Mac: brew install cloudflared, dann:" -ForegroundColor White
     Write-Host "       cloudflared access ssh --hostname $($GeneratedConfig.CloudflareHostname)" -ForegroundColor White
     Write-Host "       oder: ssh -o ProxyCommand=`"cloudflared access ssh --hostname %h`" $($GeneratedConfig.WindowsUser)@$($GeneratedConfig.CloudflareHostname)" -ForegroundColor White
     Write-Host "    3. Oder direkt: ssh $($GeneratedConfig.WindowsUser)@$($GeneratedConfig.CloudflareHostname) (mit Tunnel SSH)" -ForegroundColor White
+} elseif ($IsTailscaleMode) {
+    Write-Host "    1. Auf Mac: https://tailscale.com/download → gleiche E-Mail wie Windows einloggen" -ForegroundColor White
+    Write-Host "    2. Dann: tailscale ip -4 auf Windows → 100.x, dann ssh $($GeneratedConfig.WindowsUser)@100.x" -ForegroundColor White
 } else {
     if ($UsePasswordAuth) {
         Write-Host "    1. Teste Passwort-Login: ssh $($GeneratedConfig.WindowsUser)@<WINDOWS_IP> (lokal) oder" -ForegroundColor White
@@ -775,7 +894,12 @@ if ($IsCloudflareMode) {
 }
 Write-Host "    4. Deinstallation: Uninstall-RemoteGate.ps1" -ForegroundColor DarkGray
 Write-Host "════════════════════════════════════════════════════════════" -ForegroundColor Cyan
-if ($IsCloudflareMode) {
+if ($IsRelayMode) {
+    Write-Host "  🔗 Relay ssh-j.com ist gratis, braucht nur SSH — kein Extra-Install!" -ForegroundColor DarkGray
+    Write-Host "     Tunnel läuft über ssh-j.com (keine eigene VM nötig)" -ForegroundColor DarkGray
+} elseif ($IsTailscaleMode) {
+    Write-Host "  🔒 Tailscale ist gratis, braucht Install auf beiden Seiten" -ForegroundColor DarkGray
+} elseif ($IsCloudflareMode) {
     Write-Host "  ☁️  Dieses Skript kam aus deinem privaten Bucket ($($GeneratedConfig.YandexBucket)) auf $($GeneratedConfig.CloudProvider)" -ForegroundColor DarkGray
     Write-Host "     Tunnel läuft über Cloudflare (gratis), nicht über bezahlte VM!" -ForegroundColor DarkGray
 } else {
@@ -784,7 +908,7 @@ if ($IsCloudflareMode) {
 }
 Write-Host ""
 
-Write-InstallLog "Final installation completed (mode=$(if($IsCloudflareMode){"cloudflare"}else{"bastion"})) Device=$($GeneratedConfig.DeviceId)"
+Write-InstallLog "Final installation completed (mode=$(if($IsRelayMode){"relay"}elseif($IsTailscaleMode){"tailscale"}elseif($IsCloudflareMode){"cloudflare"}else{"bastion"})) Device=$($GeneratedConfig.DeviceId)"
 
 # Clear any residual password from variable (best effort)
 try { Remove-Variable -Name GeneratedConfig -ErrorAction SilentlyContinue } catch {}
