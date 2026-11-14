@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RemoteGate — Control Panel</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{background:#0c0c0c;color:#cccccc;font-family:"Consolas","Courier New",monospace;height:100vh;display:flex;flex-direction:column}
+  .titlebar{background:#3c3c3c;color:#fff;padding:6px 10px;display:flex;align-items:center;gap:8px;font-size:13px;user-select:none}
+  .titlebar .icon{width:16px;height:16px;background:#007acc;display:flex;align-items:center;justify-content:center;font-size:10px}
+  .titlebar .btns{margin-left:auto;display:flex;gap:2px}
+  .titlebar .btns div{width:46px;height:24px;display:flex;align-items:center;justify-content:center;cursor:pointer}
+  .titlebar .btns div:hover{background:#505050}
+  .titlebar .btns .close:hover{background:#e81123}
+  #terminal{flex:1;background:#0c0c0c;padding:12px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;line-height:1.4}
+  .line{margin:2px 0}
+  .prompt{color:#cccccc}
+  .cmd{color:#f9f1a5}
+  .output{color:#cccccc}
+  .error{color:#f1707b}
+  #inputRow{display:flex;align-items:center;padding:8px 12px;background:#0c0c0c;border-top:1px solid #333}
+  #prompt{color:#cccccc;margin-right:6px;white-space:nowrap}
+  #cmdInput{flex:1;background:transparent;border:none;color:#f9f1a5;font-family:inherit;font-size:14px;outline:none;caret-color:#fff}
+  #status{padding:4px 12px;font-size:11px;color:#858585;background:#252526;border-top:1px solid #333}
+</style>
+</head>
+<body>
+<div class="titlebar">
+  <div class="icon">C:\</div>
+  <span>Eingabeaufforderung — RemoteGate Control Panel</span>
+  <div class="btns"><div>—</div><div>□</div><div class="close">✕</div></div>
+</div>
+<div id="terminal"></div>
+<div id="inputRow">
+  <span id="prompt">C:\Windows\System32&gt;</span>
+  <input id="cmdInput" autocomplete="off" spellcheck="false" autofocus>
+</div>
+<div id="status">Verbunden via ssh-j.com — Befehle werden auf Windows mit Admin-Rechten ausgeführt (cmd /c)</div>
+<script>
+const term = document.getElementById('terminal');
+const input = document.getElementById('cmdInput');
+const promptEl = document.getElementById('prompt');
+let history = [];
+let histIdx = -1;
+
+function addLine(text, cls){
+  const d = document.createElement('div');
+  d.className = 'line ' + (cls||'output');
+  d.textContent = text;
+  term.appendChild(d);
+  term.scrollTop = term.scrollHeight;
+}
+function addPromptCmd(cmd){
+  const d = document.createElement('div');
+  d.className = 'line';
+  const p = document.createElement('span'); p.className='prompt'; p.textContent = promptEl.textContent + ' ';
+  const c = document.createElement('span'); c.className='cmd'; c.textContent = cmd;
+  d.append(p,c); term.appendChild(d);
+}
+
+addLine('Microsoft Windows [Version 10.0.19045]');
+addLine('(c) Microsoft Corporation. Alle Rechte vorbehalten.');
+addLine('');
+addLine('Tip: Alle Befehle laufen auf dem Windows-PC als Administrator (cmd /c).');
+addLine('Beispiel: dir, ipconfig, whoami, tasklist');
+addLine('');
+
+input.addEventListener('keydown', async (e)=>{
+  if(e.key === 'Enter'){
+    const cmd = input.value.trim();
+    if(!cmd) return;
+    history.push(cmd); histIdx = history.length;
+    addPromptCmd(cmd);
+    input.value = '';
+    addLine('⏳ ausführen...', 'output');
+    try{
+      const res = await fetch('/exec', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({cmd})});
+      const j = await res.json();
+      term.lastChild.remove();
+      addLine(j.output || '(kein Output)', j.returncode ? 'error' : 'output');
+    }catch(err){
+      term.lastChild.remove();
+      addLine('Fehler: ' + err.message + ' — läuft Windows und Tunnel?', 'error');
+    }
+  } else if(e.key === 'ArrowUp'){
+    if(history.length && histIdx>0){ histIdx--; input.value = history[histIdx]; }
+    e.preventDefault();
+  } else if(e.key === 'ArrowDown'){
+    if(histIdx < history.length-1){ histIdx++; input.value = history[histIdx]; } else { input.value=''; histIdx=history.length; }
+  }
+});
+input.focus();
+document.addEventListener('click', ()=> input.focus());
+</script>
+</body>
+</html>

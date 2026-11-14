@@ -1,20 +1,18 @@
 # RemoteGate
 
-Mac steuert Windows — 0 ₽, nur SSH.
+### 1. Am Mac
+Doppelklick **`gen.command`** → Passwort → Name → Enter
 
-### Schritt 1: Am Mac
-Doppelklick auf **`gen.command`** → Passwort eingeben → Name eingeben → Enter
+Befehl kopieren.
 
-Du bekommst einen Befehl für Windows.
+### 2. Auf Windows
+PowerShell **als Administrator** → Befehl einfügen → Enter
 
-### Schritt 2: Auf Windows
-PowerShell **als Administrator** öffnen → Befehl einfügen → Enter
-
-Fertig — Windows ist bereit.
-
-### Schritt 3: Vom Mac steuern
+### 3. Steuern
+**Terminal:**
 ```
 ssh -J DEIN_NAME@ssh-j.com winpc
 ```
 
-Mehr steht in `docs/EINFACH.md`.
+**Control Panel:**
+Doppelklick `ctrl.command` → Fenster wie Windows CMD → Befehl eingeben → läuft auf Windows als Admin.
