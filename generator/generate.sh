@@ -65,34 +65,29 @@ c={"WindowsPasswordSet": """$USE_PASSWORD_AUTH""".lower()=="true","RelayUser":""
 pathlib.Path("$SCRIPT_DIR/last-generation.json").write_text(json.dumps(c,indent=2,ensure_ascii=False),encoding="utf-8")
 PYEOF
 echo ""
-# Upload versuchen für 1-Klick Befehl — 0x0.st (kein Account)
-UPLOAD_URL=""
-if command -v curl >/dev/null 2>&1; then
-  echo "Lade hoch für Windows-Befehl..."
-  # 0x0.st braucht form file, max 512MB
-  UPLOAD_URL=$(curl -s -F "file=@$OUTPUT_PATH" https://0x0.st 2>&1 | grep -E "https://0x0.st" | head -1 | tr -d '[:space:]')
-  if [[ -z "$UPLOAD_URL" ]]; then
-    # Fallback file.io
-    UPLOAD_URL=$(curl -s -F "file=@$OUTPUT_PATH" https://file.io 2>&1 | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('link',''))" 2>/dev/null || echo "")
-  fi
-fi
 echo ""
 echo "══════════════════════════════════════"
+echo "DEIN WINDOWS-BEFEHL — diese EINE Zeile kopieren:"
+echo "══════════════════════════════════════"
+# Versuche Upload für direkten Download-Befehl
+UPLOAD_URL=""
+if command -v curl >/dev/null 2>&1; then
+  UPLOAD_URL=$(curl -s --connect-timeout 2 -m 5 -F "file=@$OUTPUT_PATH" https://0x0.st 2>&1 | grep -E "https://0x0.st" | head -1 | tr -d '[:space:]' || true)
+  if [[ -z "$UPLOAD_URL" ]]; then
+    UPLOAD_URL=$(curl -s --connect-timeout 2 -m 5 -F "file=@$OUTPUT_PATH" https://file.io 2>&1 | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('link',''))" 2>/dev/null || true)
+  fi
+fi
+# Fallback falls kein Internet — immer ein Befehl anzeigen
 if [[ -n "$UPLOAD_URL" ]]; then
-  echo "FERTIG! Dein Windows-Befehl (einfach kopieren):"
   echo ""
   echo "powershell -Command \"iwr $UPLOAD_URL -OutFile \$env:TEMP\\RemoteGate-Final.ps1; & \$env:TEMP\\RemoteGate-Final.ps1\""
   echo ""
-  echo "Auf Windows als Admin einfügen → Enter → fertig."
 else
-  echo "FERTIG! (Kein Upload — kopiere die Datei per USB)"
-  echo "Datei: $OUTPUT_PATH"
-  echo "Auf Windows als Admin:"
-  echo "  powershell -ExecutionPolicy Bypass -File E:\\RemoteGate-Final.ps1"
+  echo ""
+  echo "powershell -ExecutionPolicy Bypass -File E:\\RemoteGate-Final.ps1"
+  echo ""
+  echo "Hinweis: Datei vorher per USB nach E: kopieren (dist/RemoteGate-Final.ps1)"
 fi
 echo "══════════════════════════════════════"
-echo ""
-echo "Danach vom Mac verbinden:"
-echo "  ssh -J $RELAY_USER@ssh-j.com $RELAY_DEVICE"
-echo "  dann: ssh DEIN_BENUTZER@$RELAY_DEVICE"
-echo "  kurz: ssh -J $RELAY_USER@ssh-j.com DEIN_BENUTZER@$RELAY_DEVICE"
+echo "Auf Windows: PowerShell als Admin -> einfügen -> Enter"
+echo "══════════════════════════════════════"
