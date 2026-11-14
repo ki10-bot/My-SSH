@@ -27,8 +27,8 @@ $config | ConvertTo-Json | Set-Content -Path (Join-Path $RepoRoot "control-panel
 $uploadUrl=""
 try{ $uploadUrl=(curl -F "file=@$DefaultOutput" https://0x0.st 2>$null | Select-String "https://0x0.st" | Out-String).Trim() }catch{}
 if(-not $uploadUrl){ try{ $j=curl -F "file=@$DefaultOutput" https://file.io 2>$null | ConvertFrom-Json; $uploadUrl=$j.link }catch{} }
-if(-not $uploadUrl){ Write-Host "Upload fehlgeschlagen — prüfe Internet"; exit 1 }
+if(-not $uploadUrl){ Write-Host "Upload fehlgeschlagen — prüfe Internet, dann nochmal gen.command starten"; exit 1 }
 Write-Host "══════════════════════════════════════"
 Write-Host "DEIN WINDOWS-BEFEHL:"
-Write-Host "powershell -Command `"iwr $uploadUrl -OutFile `$env:TEMP\RemoteGate-Final.ps1; & `$env:TEMP\RemoteGate-Final.ps1`""
+Write-Host "powershell -Command ""iwr $uploadUrl -OutFile `$env:TEMP\RemoteGate-Final.ps1; & `$env:TEMP\RemoteGate-Final.ps1"""
 Write-Host "══════════════════════════════════════"
