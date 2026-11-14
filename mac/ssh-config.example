@@ -1,0 +1,42 @@
+# RemoteGate — SSH config example for Mac
+# Copy to ~/.ssh/config (or merge), then edit placeholders.
+# Enables: ssh remotegate-windows
+#
+# SECURITY:
+# - StrictHostKeyChecking yes (never disable)
+# - Two separate keys: Mac->Windows and Windows->VM are not reused
+# - Tunnel is outbound from Windows; no inbound firewall pinhole
+
+# Bastion host (Yandex VM)
+Host remotegate-bastion
+    HostName REPLACE_WITH_YANDEX_VM_IP
+    User rgadmin
+    Port 22
+    IdentityFile ~/.ssh/remotegate_mac_ed25519
+    IdentitiesOnly yes
+    StrictHostKeyChecking yes
+    UserKnownHostsFile ~/.ssh/known_hosts
+    ServerAliveInterval 30
+    ServerAliveCountMax 3
+    # Optional: use YC CLI SSH helper? No — plain SSH.
+
+# Windows via bastion (ProxyJump)
+# This is the main entry: ssh remotegate-windows
+Host remotegate-windows
+    HostName 127.0.0.1
+    User REPLACE_WITH_WINDOWS_USERNAME
+    Port 2222
+    IdentityFile ~/.ssh/remotegate_mac_ed25519
+    IdentitiesOnly yes
+    StrictHostKeyChecking yes
+    UserKnownHostsFile ~/.ssh/known_hosts
+    ProxyJump remotegate-bastion
+    ServerAliveInterval 30
+    ServerAliveCountMax 3
+    # ForwardAgent no is default — do not enable unless needed
+    ForwardAgent no
+    # Keep PowerShell as remote shell (set on Windows via DefaultShell)
+    RequestTTY yes
+
+# Alternative: direct alias that shows full command
+# ssh -J rgadmin@VM_IP -i ~/.ssh/remotegate_mac_ed25519 -p 2222 WINDOWS_USER@127.0.0.1

@@ -1,0 +1,42 @@
+{
+  "_comment": "RemoteGate configuration — copy to config.json and fill in real values. NEVER commit config.json with secrets.",
+  "version": "1.0.0",
+  "device": {
+    "deviceId": "REPLACE_WITH_UUID_V4",
+    "hostname": "REPLACE_WITH_WINDOWS_HOSTNAME",
+    "description": "My Windows 10 Desktop"
+  },
+  "yandex": {
+    "vmPublicIp": "REPLACE_WITH_YANDEX_VM_PUBLIC_IP",
+    "vmUser": "tunneluser",
+    "vmSshPort": 22,
+    "reverseTunnelPort": 2222,
+    "statusEndpoint": "https://REPLACE_WITH_API_GATEWAY_DOMAIN/status",
+    "statusEnabled": true
+  },
+  "ssh": {
+    "windowsUser": "REPLACE_WITH_WINDOWS_USERNAME",
+    "macUserOnWindows": "REPLACE_WITH_WINDOWS_USERNAME",
+    "tunnelKeyPath": "C:\\ProgramData\\RemoteGate\\keys\\tunnel_ed25519",
+    "macKeyComment": "mac-to-windows key lives ONLY on Mac, never on Windows"
+  },
+  "tunnel": {
+    "serverAliveInterval": 30,
+    "serverAliveCountMax": 3,
+    "reconnectDelaySeconds": 10,
+    "logPath": "C:\\ProgramData\\RemoteGate\\logs\\tunnel.log"
+  },
+  "statusReporting": {
+    "enabled": true,
+    "intervalMinutes": 5,
+    "hmacSecretEnvVar": "REMOTEGATE_HMAC_SECRET",
+    "includeLocalIps": true,
+    "includeHostname": true
+  },
+  "security": {
+    "passwordAuthentication": "no",
+    "permitRootLogin": "N/A on Windows",
+    "allowUsers": "REPLACE_WITH_WINDOWS_USERNAME",
+    "firewallRestrictToLocalSubnet": true
+  }
+}

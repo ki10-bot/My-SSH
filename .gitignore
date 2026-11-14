@@ -1,0 +1,50 @@
+# RemoteGate - secrets and sensitive files
+config/config.json
+config/*.local.json
+*.pem
+*.key
+id_rsa
+id_ed25519
+*.ppk
+.ssh/
+secrets/
+
+# Windows temp and logs
+logs/
+*.log
+Temp/
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Terraform
+cloud/infrastructure/.terraform/
+cloud/infrastructure/*.tfstate
+cloud/infrastructure/*.tfstate.backup
+cloud/infrastructure/.terraform.lock.hcl
+terraform.tfvars
+
+# Node test deps
+node_modules/
+package-lock.json
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Pester results
+TestResults.xml
+
+# Yandex CLI
+.yc/

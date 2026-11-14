@@ -1,0 +1,25 @@
+# RemoteGate — Terraform variables (copy to terraform.tfvars and fill in)
+# NEVER commit terraform.tfvars with secrets.
+
+yc_cloud_id  = "b1g..."
+yc_folder_id = "b1g..."
+
+# Zone — ru-central1-a is default; check docs/YANDEX-CLOUD-SETUP.md for current availability
+yc_zone = "ru-central1-a"
+
+project_name     = "remotegate"
+admin_username   = "rgadmin"
+admin_ssh_key_path = "~/.ssh/remotegate_mac.pub"
+
+vm_resources = {
+  cores         = 2
+  memory        = 2
+  core_fraction = 20
+  disk_size     = 20
+  disk_type     = "network-hdd" # network-hdd is cheapest; network-ssd faster
+  preemptible   = false          # true = 50-70% cheaper, but may be evicted
+}
+
+# Status endpoint — leave empty to skip function/gateway creation (SSH-only deploy)
+hmac_secret        = "REPLACE_WITH_RANDOM_32+_CHAR_SECRET"
+allowed_device_ids = "" # e.g. "a1b2c3d4-...,e5f6g7h8-..."
