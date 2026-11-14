@@ -54,7 +54,6 @@ pathlib.Path("$SCRIPT_DIR/last-generation.json").write_text(json.dumps({"RelayUs
 PYEOF
 echo ""
 echo "Lade hoch..."
-# Mehr Hosts probieren — 0x0.st kann in RU blockiert sein
 UPLOAD_URL=""
 for HOST in "https://0x0.st" "https://tmpfiles.org/api/v1/upload" "https://file.io" "https://transfer.sh"; do
   if [[ "$HOST" == *"tmpfiles"* ]]; then
@@ -69,31 +68,25 @@ for HOST in "https://0x0.st" "https://tmpfiles.org/api/v1/upload" "https://file.
   fi
   [[ -n "$UPLOAD_URL" ]] && break
 done
+echo ""
+echo "══════════════════════════════════════"
+echo "SCHRITT 1 — Auf Windows PowerShell als ADMIN öffnen:"
+echo "  Startmenü -> \"PowerShell\" tippen -> Rechtsklick -> Als Administrator ausführen -> Ja klicken"
+echo "══════════════════════════════════════"
+echo ""
 if [[ -n "$UPLOAD_URL" ]]; then
+  echo "SCHRITT 2 — Diese EINE Zeile dort einfügen und Enter:"
   echo ""
-  echo "══════════════════════════════════════"
-  echo "DEIN WINDOWS-BEFEHL — diese EINE Zeile kopieren:"
-  echo "══════════════════════════════════════"
+  echo "iwr $UPLOAD_URL -OutFile \$env:TEMP\\RemoteGate-Final.ps1; & \$env:TEMP\\RemoteGate-Final.ps1"
   echo ""
-  # CMD zuerst, dann PowerShell als Admin — fragt nach Admin falls nötig
-  echo "cmd /c \"powershell -Command \\\"Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile -Command \\\"iwr $UPLOAD_URL -OutFile \\\$env:TEMP\\\\RemoteGate-Final.ps1; & \\\$env:TEMP\\\\RemoteGate-Final.ps1\\\"'\""
-  echo ""
-  echo "Falls schon als Admin: einfach so:"
-  echo "powershell -Command \"iwr $UPLOAD_URL -OutFile \$env:TEMP\\RemoteGate-Final.ps1; & \$env:TEMP\\RemoteGate-Final.ps1\""
-  echo ""
-  echo "══════════════════════════════════════"
 else
   B64=$(base64 -w 0 "$OUTPUT_PATH" 2>/dev/null || base64 "$OUTPUT_PATH" | tr -d '\n')
-  echo "Kein Upload — nutze Offline-Befehl (geht 1:1 genauso, kein Internet nötig):"
+  echo "SCHRITT 2 — Diese EINE Zeile dort einfügen und Enter (offline, ohne Internet):"
   echo ""
-  echo "══════════════════════════════════════"
-  echo "DEIN WINDOWS-BEFEHL — diese EINE Zeile kopieren:"
-  echo "══════════════════════════════════════"
+  echo "\$b=[Convert]::FromBase64String('$B64'); [IO.File]::WriteAllBytes(\"\$env:TEMP\\RemoteGate-Final.ps1\",\$b); & \$env:TEMP\\RemoteGate-Final.ps1"
   echo ""
-  echo "cmd /c \"powershell -Command \\\"Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile -Command \\\"\$b=[Convert]::FromBase64String('''$B64'''); [IO.File]::WriteAllBytes(\\\"\$env:TEMP\\\\RemoteGate-Final.ps1\\\",\$b); & \\\$env:TEMP\\\\RemoteGate-Final.ps1\\\"'\\\"\""
-  echo ""
-  echo "Falls schon als Admin:"
-  echo "powershell -Command \"\$b=[Convert]::FromBase64String('$B64'); [IO.File]::WriteAllBytes(\"\$env:TEMP\\RemoteGate-Final.ps1\",\$b); & \$env:TEMP\\RemoteGate-Final.ps1\""
-  echo ""
-  echo "══════════════════════════════════════"
 fi
+echo "══════════════════════════════════════"
+echo "Fenster bleibt offen und zeigt Fortschritt. Am Ende Enter drücken."
+echo ""
+echo "Prüfen: C:\\ProgramData\\RemoteGate\\logs\\install.log"
