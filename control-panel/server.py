@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-import http.server, json, pathlib, subprocess, sys, urllib.parse, os
+import http.server, json, pathlib, subprocess, sys, os
 
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8787
 ROOT = pathlib.Path(__file__).parent
-REPO = ROOT.parent
 CONFIG_PATH = ROOT / "config.json"
 
 def load_config():
     if CONFIG_PATH.exists():
-        return json.loads(CONFIG_PATH.read_text())
+        try:
+            return json.loads(CONFIG_PATH.read_text())
+        except: return {}
     return {}
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -16,7 +17,6 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         if self.path == "/" or self.path == "/index.html":
             self.path = "/index.html"
             return http.server.SimpleHTTPRequestHandler.do_GET(self)
-        # Favicon etc
         return http.server.SimpleHTTPRequestHandler.do_GET(self)
 
     def do_POST(self):
@@ -27,41 +27,53 @@ class Handler(http.server.SimpleHTTPRequestHandler):
                 data = json.loads(body)
                 cmd = data.get("cmd", "").strip()
                 if not cmd:
-                    self.send_json({"output": ""})
-                    return
-                # Block dangerous? but admin requested
+                    self.send_json({"output": ""}); return
                 cfg = load_config()
                 relay_user = cfg.get("relayUser", "")
                 relay_host = cfg.get("relayHost", "ssh-j.com")
                 relay_device = cfg.get("relayDevice", "winpc")
-                windows_user = cfg.get("windowsUser", "DEIN_BENUTZER")
-                # Wenn windowsUser Platzhalter, versuche echten Namen via ssh-j Liste? Fallback: nehme cfg
-                # Führe aus: ssh -J relayUser@ssh-j.com windowsUser@relayDevice "cmd /c <cmd>"
-                # Nutze BatchMode, Timeout 15s
-                ssh_cmd = [
-                    "ssh",
-                    "-o", "StrictHostKeyChecking=no",
-                    "-o", "ConnectTimeout=10",
-                    "-o", "ServerAliveInterval=10",
-                    "-J", f"{relay_user}@{relay_host}",
-                    f"{windows_user}@{relay_device}",
-                    f"cmd /c {cmd}"
-                ]
-                # Falls windowsUser DEIN_BENUTZER, versuche ohne User-Präfix (manche haben auto-detect)
-                # Fallback: direkt device (ssh -J user@host device) geht bei ssh-j.com, aber für cmd brauchen wir user@device
-                # Wenn erster Versuch fehlschlägt, probiere ohne windowsUser
-                result = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=20)
-                output = result.stdout + result.stderr
-                if result.returncode != 0 and "DEIN_BENUTZER" in windows_user:
-                    # Versuche mit device direkt und cmd via ssh -J
-                    ssh_cmd2 = ["ssh","-o","StrictHostKeyChecking=no","-o","ConnectTimeout=10","-J", f"{relay_user}@{relay_host}", relay_device, f"cmd /c {cmd}"]
-                    result2 = subprocess.run(ssh_cmd2, capture_output=True, text=True, timeout=20)
-                    output = result2.stdout + result2.stderr
-                self.send_json({"output": output, "returncode": result.returncode})
-            except subprocess.TimeoutExpired:
-                self.send_json({"output": "Timeout — Windows nicht erreichbar (läuft Tunnel? Neustart abwarten)", "returncode": 124})
+                windows_user = cfg.get("windowsUser", "")
+                # Versuche WindowsUser aus Relay zu ermitteln wenn Platzhalter
+                if not windows_user or windows_user == "DEIN_BENUTZER":
+                    windows_user = relay_device  # Fallback, oft gleich
+                # Sichere cmd für ssh: ersetze " durch \"
+                safe_cmd = cmd.replace('"', '\\"')
+                # 1. Versuch: windowsUser@device
+                ssh_base = ["ssh","-o","StrictHostKeyChecking=no","-o","ConnectTimeout=10","-o","ServerAliveInterval=10","-J", f"{relay_user}@{relay_host}"]
+                attempts = []
+                if windows_user and windows_user != relay_device:
+                    attempts.append(ssh_base + [f"{windows_user}@{relay_device}", f'cmd /c "{safe_cmd}"'])
+                attempts.append(ssh_base + [relay_device, f'cmd /c "{safe_cmd}"'])
+                # Letzter Versuch: direkt über ssh-j.com ohne device (manche nutzen das so)
+                attempts.append(ssh_base + [f"{relay_user}@{relay_host}", f'cmd /c "{safe_cmd}"'])
+
+                last_output = ""
+                for ssh_cmd in attempts:
+                    try:
+                        result = subprocess.run(ssh_cmd, capture_output=True, text=True, timeout=15)
+                        output = (result.stdout or "") + (result.stderr or "")
+                        # Erkenne typischen ssh-j Fehler: administratively prohibited = Gerät nicht online
+                        if "administratively prohibited" in output or "stdio forwarding failed" in output or "Connection closed" in output:
+                            last_output = output
+                            continue
+                        self.send_json({"output": output.strip() or "(kein Output)", "returncode": result.returncode})
+                        return
+                    except subprocess.TimeoutExpired:
+                        last_output = "Timeout — Windows nicht erreichbar"
+                    except Exception as e:
+                        last_output = f"Fehler: {e}"
+                # Alle Versuche fehlgeschlagen -> hilfreiche Meldung
+                friendly = (
+                    "⚠️ Windows nicht verbunden.\n\n"
+                    "1. Hast du auf Windows den Befehl als ADMIN ausgeführt (Rechtsklick → Als Administrator)?\n"
+                    "2. Warte 20 Sekunden nach dem Windows-Befehl — Tunnel braucht kurz.\n"
+                    "3. Prüfe auf Windows: Task-Manager → Dienste → sshd läuft?\n"
+                    "4. Prüfe Logs: C:\\ProgramData\\RemoteGate\\logs\\install.log\n\n"
+                    f"Technisch: {last_output}"
+                )
+                self.send_json({"output": friendly, "returncode": 1})
             except Exception as e:
-                self.send_json({"output": f"Fehler: {e}", "returncode": 1})
+                self.send_json({"output": f"Server Fehler: {e}", "returncode": 1})
             return
         self.send_error(404)
 
@@ -83,5 +95,5 @@ class Handler(http.server.SimpleHTTPRequestHandler):
 
 os.chdir(ROOT)
 print(f"Control Panel: http://localhost:{PORT}")
-print(f"Config: {CONFIG_PATH} -> {load_config()}")
+print(f"Config: {load_config()}")
 http.server.HTTPServer(("0.0.0.0", PORT), Handler).serve_forever()

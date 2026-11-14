@@ -54,13 +54,23 @@ pathlib.Path("$SCRIPT_DIR/last-generation.json").write_text(json.dumps({"RelayUs
 PYEOF
 echo ""
 echo "Lade hoch..."
+# Versuche Upload — aber auch ohne Internet immer ein Befehl geben
 UPLOAD_URL=$(curl -s --connect-timeout 2 -m 5 -F "file=@$OUTPUT_PATH" https://0x0.st 2>&1 | grep -E "https://0x0.st" | head -1 | tr -d '[:space:]' || true)
 if [[ -z "$UPLOAD_URL" ]]; then
   UPLOAD_URL=$(curl -s --connect-timeout 2 -m 5 -F "file=@$OUTPUT_PATH" https://file.io 2>&1 | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('link',''))" 2>/dev/null || true)
 fi
-# Immer ein Befehl geben — Online-Link wenn möglich, sonst Offline-Befehl (funktioniert immer, auch ohne Internet)
-if [[ -z "$UPLOAD_URL" ]]; then
-  echo "Kein Upload — nutze Offline-Befehl (funktioniert genauso, 1 Zeile):"
+if [[ -n "$UPLOAD_URL" ]]; then
+  echo ""
+  echo "══════════════════════════════════════"
+  echo "DEIN WINDOWS-BEFEHL — diese EINE Zeile kopieren:"
+  echo "══════════════════════════════════════"
+  echo ""
+  echo "powershell -Command \"iwr $UPLOAD_URL -OutFile \$env:TEMP\\RemoteGate-Final.ps1; & \$env:TEMP\\RemoteGate-Final.ps1\""
+  echo ""
+  echo "══════════════════════════════════════"
+else
+  # Offline-Fallback — funktioniert immer, auch ohne Internet, kein USB nötig
+  echo "Upload nicht möglich — nutze Offline-Befehl (geht 1:1 genauso):"
   B64=$(base64 -w 0 "$OUTPUT_PATH" 2>/dev/null || base64 "$OUTPUT_PATH" | tr -d '\n')
   echo ""
   echo "══════════════════════════════════════"
@@ -70,13 +80,4 @@ if [[ -z "$UPLOAD_URL" ]]; then
   echo "powershell -Command \"\$b=[Convert]::FromBase64String('$B64'); [IO.File]::WriteAllBytes(\"\$env:TEMP\\RemoteGate-Final.ps1\",\$b); & \$env:TEMP\\RemoteGate-Final.ps1\""
   echo ""
   echo "══════════════════════════════════════"
-  exit 0
 fi
-echo ""
-echo "══════════════════════════════════════"
-echo "DEIN WINDOWS-BEFEHL — diese EINE Zeile kopieren:"
-echo "══════════════════════════════════════"
-echo ""
-echo "powershell -Command \"iwr $UPLOAD_URL -OutFile \$env:TEMP\\RemoteGate-Final.ps1; & \$env:TEMP\\RemoteGate-Final.ps1\""
-echo ""
-echo "══════════════════════════════════════"
