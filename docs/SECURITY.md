@@ -2,12 +2,12 @@
 
 ## Overview
 
-RemoteGate is a **secure, transparent remote administration system** for one owned Windows computer via SSH, with a Yandex Cloud bastion as jump host. No hidden backdoors, no obfuscation, no credential exfiltration.
+RemoteGate is a **secure, transparent remote administration system** for one owned Windows computer via SSH, with a Cloud.ru (default) / Yandex bastion as jump host. No hidden backdoors, no obfuscation, no credential exfiltration.
 
 ## Architecture & Data Flow
 
 ```
-Windows (sshd:22) <--[reverse tunnel 127.0.0.1:2222]--- Yandex VM (sshd:22)
+Windows (sshd:22) <--[reverse tunnel 127.0.0.1:2222]--- Cloud VM (sshd:22)
                                                             ^
 Mac (ssh via ProxyJump) ------------------------------------+
                                                             |
@@ -31,7 +31,7 @@ Windows --HTTPS+HMAC--> API Gateway --> Cloud Function (status)
 - **Default:** Key-based only (`PasswordAuthentication no`, `PubkeyAuthentication yes`).
 - **Separate keys:** Mac→Windows and Windows→VM never reuse. Mac private key never on Windows, tunnel private key never on Mac.
 - **Host key verification:** `StrictHostKeyChecking yes` everywhere (Windows `known_hosts`, Mac `known_hosts`). **Never** disable for convenience (prohibited).
-- **No passwords in repo:** `DEIN_PASSWORT` is a placeholder meaning "your password" — never a real password. Keep password auth disabled by default. **NEW:** Wizard allows fixed password (explicit opt-in) — generates private `dist/RemoteGate-Final.ps1` with real password, uploaded to **private** Yandex Object Storage bucket, never committed to GitHub (`.gitignore` covers `dist/`). See `docs/GENERATOR.md`. Use strong password (≥12 chars, complexity) and delete object after install.
+- **No passwords in repo:** `DEIN_PASSWORT` is a placeholder meaning "your password" — never a real password. Keep password auth disabled by default. **NEW:** Wizard allows fixed password (explicit opt-in) — generates private `dist/RemoteGate-Final.ps1` with real password, uploaded to **private** Cloud.ru/Yandex Object Storage bucket, never committed to GitHub (`.gitignore` covers `dist/`). See `docs/GENERATOR.md`. Use strong password (≥12 chars, complexity) and delete object after install.
 - **Hardened `sshd_config`:** `PermitRootLogin no`, `PermitEmptyPasswords no`, `MaxAuthTries 3`, `LoginGraceTime 60`, `ClientAliveInterval 30`.
 
 ### Port forwarding
@@ -46,7 +46,7 @@ Windows --HTTPS+HMAC--> API Gateway --> Cloud Function (status)
 - **Storage:**
   - Tunnel key: `C:\ProgramData\RemoteGate\keys\tunnel_ed25519` ACL: `SYSTEM`+`Administrators` only.
   - HMAC secret: ENV `REMOTEGATE_HMAC_SECRET` or file `hmac-secret.txt` ACL same; never logged.
-  - Fixed password (NEW): Injected by wizard into `dist/RemoteGate-Final.ps1`, stored only in **private** Yandex Object Storage bucket (ACL private, presigned URLs 7 days). Not in GitHub. Wizard redacts in logs (`***REDACTED***`) and `last-generation.json` never saves plain password.
+  - Fixed password (NEW): Injected by wizard into `dist/RemoteGate-Final.ps1`, stored only in **private** Cloud.ru/Yandex Object Storage bucket (ACL private, presigned URLs 7 days). Not in GitHub. Wizard redacts in logs (`***REDACTED***`) and `last-generation.json` never saves plain password.
   - On VM: `authorized_keys` perms `0600`, owner `tunneluser`.
 - **Do not log secrets:** Scripts avoid `Write-Host $secret`; logs show only truncated fingerprints. Final template redacts password in `Write-InstallLog`.
 

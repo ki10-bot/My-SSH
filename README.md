@@ -1,14 +1,14 @@
-# RemoteGate — Secure Windows Remote Administration via Yandex Cloud
+# RemoteGate — Secure Windows Remote Administration via Cloud.ru (Free Tier)
 
-> **Owner's setup:** MacBook (macOS, SSH via Terminal) controls one owned Windows 10 PC via SSH through a Yandex Cloud bastion. No VPN required.
+> **Owner's setup:** MacBook (macOS, SSH via Terminal) controls one owned Windows 10 PC via SSH through a Cloud.ru Evolution bastion (Free Tier VM 2vCPU/4GB gratis). No VPN required.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](#license)
 [![Windows](https://img.shields.io/badge/Windows-10%201809%2B-blue)](#requirements)
-[![Yandex Cloud](https://img.shields.io/badge/Yandex-Cloud-red)](#yandex-cloud-setup)
+[![Cloud.ru](https://img.shields.io/badge/Cloud.ru-Evolution-green)](#cloudru-setup) [![Yandex Cloud](https://img.shields.io/badge/Yandex-Cloud-red)](#yandex-cloud-setup)
 
 > ### ➡️ **START HIER / START HERE — Doppelklick auf Mac, Doppelklick auf Windows**
 >
-> **Auf Mac (Beispiel-Skript wird auf Mac generiert):** Im Finder **`generate_template.command` doppelklicken** → Wizard startet → festes Passwort (`DEIN_PASSWORT`) + Yandex Daten → `dist/RemoteGate-Final.ps1` → auto Upload nach Yandex
+> **Auf Mac (Beispiel-Skript wird auf Mac generiert):** Im Finder **`generate_template.command` doppelklicken** → Wizard startet → festes Passwort (`DEIN_PASSWORT`) + Yandex Daten → `dist/RemoteGate-Final.ps1` → auto Upload nach Cloud.ru
 >
 > **Alternativ Terminal:** `bash generate_template.command` oder `bash generator/generate.sh` oder `./generate_template.sh`
 >
@@ -19,12 +19,12 @@
 > ```bash
 > git clone https://github.com/ki10-bot/My-SSH.git && cd My-SSH
 > open generate_template.command  # Mac Finder — oder Doppelklick
-> # → Wizard: Passwort setzen → Yandex → FINAL aus Yandex
+> # → Wizard: Passwort setzen → Cloud.ru (Free Tier) → FINAL aus Cloud.ru S3
 > ```
 
 ## What RemoteGate is
 
-RemoteGate installs **official Windows OpenSSH Server**, hardens it (keys only, no passwords), restricts the firewall to your local network, and creates a **persistent outbound reverse SSH tunnel** to a Yandex Cloud VM (bastion). You connect from your Mac with a single `ssh -J` command. An optional authenticated HTTPS status endpoint lets the PC report health to Yandex.
+RemoteGate installs **official Windows OpenSSH Server**, hardens it (keys only, no passwords), restricts the firewall to your local network, and creates a **persistent outbound reverse SSH tunnel** to a Cloud.ru Evolution VM (bastion, Free Tier). You connect from your Mac with a single `ssh -J` command. An optional authenticated HTTPS status endpoint lets the PC report health to Yandex.
 
 ## What it does
 
@@ -34,7 +34,7 @@ RemoteGate installs **official Windows OpenSSH Server**, hardens it (keys only, 
 - Generates a **dedicated** tunnel key (ED25519) + device ID
 - Creates a **visible** Scheduled Task (`\RemoteGate\RemoteGate-Tunnel`) that keeps the tunnel alive with keepalives and exponential backoff
 - Verifies installation and logs everything
-- (Optional) Reports status via HMAC-SHA256 + timestamp + nonce to a Yandex Cloud Function / API Gateway
+- (Optional) Reports status via HMAC-SHA256 + timestamp + nonce to a Cloud Function / API Gateway (Yandex or Cloud.ru)
 
 ## What it does NOT do
 
@@ -52,7 +52,7 @@ RemoteGate installs **official Windows OpenSSH Server**, hardens it (keys only, 
 MacBook ──────────────────────────────────────────────┐
    │  ssh -J cloud@YANDEX_VM -p 2222 user@127.0.0.1    │
    │                                                  ▼
-   │          Yandex Cloud VM (Bastion, Ubuntu)   127.0.0.1:2222
+   │          Cloud.ru VM (Bastion, Ubuntu)   127.0.0.1:2222
    │          ┌────────────────────────────────────────┘
    │          │  Reverse tunnel (outbound from Windows)
    │          │  ssh -N -R 127.0.0.1:2222:127.0.0.1:22  tunneluser@VM
@@ -76,9 +76,9 @@ Windows ──HTTPS+HMAC──► API Gateway ──► Cloud Function ──►
 | Windows | 10 build 1809 (17763)+; 10 reached EOL 2025-10-14 — see `docs/WINDOWS10-EOL.md` (Windows 11 / supported Server recommended for production) |
 | PowerShell | 5.1+ (for install), 7 optional as remote shell |
 | Admin | Local Administrator approval (UAC) |
-| Cloud | Yandex Cloud account (or SSH-only local mode with `-SkipCloudConfig`) |
+| Cloud | Cloud.ru Evolution Free Tier (default, 146 ₽/Mo IP) or Yandex Cloud (or SSH-only `-SkipCloudConfig`) |
 | Mac | macOS with OpenSSH 7.3+ (all modern Macs) |
-| Network | Outbound SSH (22) + HTTPS (443) to Yandex — no inbound firewall holes needed on Windows |
+| Network | Outbound SSH (22) + HTTPS (443) to Cloud — no inbound firewall holes needed on Windows |
 
 ## Repository structure
 
@@ -102,31 +102,34 @@ RemoteGate/
 │   ├── RemoteGate-Agent.ps1      # Health check / auto-repair
 │   ├── RemoteGate-Tunnel.ps1     # Persistent tunnel manager
 │   └── RemoteGate-Status.ps1     # HMAC status reporter
-├── generator/                  # ⭐ NEW: Wizard for fixed password + Yandex upload
-│   ├── New-RemoteGateDeployment.ps1  # Interactive wizard (DEIN_PASSWORT → dein PW)
-│   ├── Upload-ToYandex.ps1           # S3 upload to Object Storage (yc/aws)
+├── generator/                  # ⭐ Wizard for fixed password + Cloud upload (Cloud.ru default)
+│   ├── New-RemoteGateDeployment.ps1  # Wizard (DEIN_PASSWORT → dein PW, Cloud.ru/Yandex wählbar)
+│   ├── Upload-ToCloud.ps1              # S3 upload (Cloud.ru https://s3.cloud.ru, Yandex fallback)
+│   ├── Upload-ToYandex.ps1           # Legacy Yandex uploader (Yandex-only)
 │   ├── Example-Install.ps1.example   # Example (DEIN_PASSWORT Platzhalter)
 │   ├── Example-Config.json.example   # Prefill für -NonInteractive
 │   └── README.md
 ├── templates/
 │   └── RemoteGate-Deployment.template.ps1  # FINAL template (Platzhalter DEIN_PASSWORT etc.)
 ├── dist/                         # Generierter FINAL (privat, nicht committen! .gitignore)
-│   └── RemoteGate-Final.ps1      # Aus Yandex herunterladen, nicht GitHub
+│   └── RemoteGate-Final.ps1      # Aus Cloud.ru/Yandex herunterladen, nicht GitHub
 ├── cloud/
 │   ├── vm/setup.sh               # VM hardening script
 │   ├── vm/cloud-init.yaml
 │   ├── functions/index.js        # HMAC status endpoint
 │   ├── gateway/spec.yaml         # OpenAPI 3.0 + Yandex extension
-│   ├── storage/                  # ⭐ NEW: Object Storage bucket (für Yandex Installer)
-│   └── infrastructure/           # Terraform (VPC, VM, Function, Gateway)
+│   ├── storage/                  # Object Storage bucket (Cloud.ru s3.cloud.ru, Yandex fallback)
+│   └── infrastructure/           # Terraform (VPC, VM, Function, Gateway) — Yandex, Cloud.ru via storage/
+├── cloud/storage legacy yandex/      # Legacy Yandex Terraform (siehe git log)
 ├── mac/
 │   ├── setup-keys.sh             # Generates Mac→Windows key
 │   ├── connect.sh                # ProxyJump helper
 │   └── ssh-config.example        # ~/.ssh/config snippet
 ├── config/config.example.json
 ├── docs/
-│   ├── GENERATOR.md              # ⭐ Wizard & Yandex Upload Guide (deine 8 Schritte)
-│   ├── YANDEX-VM-GUIDE.md        # ⭐ NEU: Wie kriege ich Yandex VM? Kostenlos? (einfach!)
+│   ├── GENERATOR.md              # Wizard & Cloud Upload Guide (Cloud.ru default, 8 Schritte)
+│   ├── CLOUDRU-VM-GUIDE.md           # ⭐ NEU: Wie kriege ich Cloud.ru VM? Free Tier (≈1,50€/Mo)
+│   ├── YANDEX-VM-GUIDE.md        # Legacy: Yandex VM Guide (jetzt Cloud.ru Default)
 │   ├── INSTALLATION.md           # Installation (GitHub vs Yandex)
 │   ├── YANDEX-CLOUD-SETUP.md     # Account/VM/Function/Gateway + regions/restrictions (detailliert)
 │   ├── MAC-CONNECTION.md         # ssh -J guide + host keys

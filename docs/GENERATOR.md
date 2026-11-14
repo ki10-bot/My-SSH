@@ -1,14 +1,14 @@
 # RemoteGate — Generator & Yandex Upload Guide
 
-> **Neuer Workflow (deine 8 Schritte):** GitHub enthält Installer + Beispiel → du lädst Repo herunter → öffnest Wizard → setzt festes Passwort (`DEIN_PASSWORT` → dein echtes) + Yandex Daten → Wizard injiziert in Beispiel → finaler Skript → Upload nach Yandex → Windows lädt aus Yandex (nicht GitHub).
+> **Neuer Workflow (deine 8 Schritte):** GitHub enthält Installer + Beispiel → du lädst Repo herunter → öffnest Wizard → setzt festes Passwort (`DEIN_PASSWORT` → dein echtes) + Cloud.ru (Free Tier) oder Yandex Daten → Wizard injiziert → finaler Skript → Upload nach Cloud.ru/Yandex → Windows lädt aus Cloud (nicht GitHub).
 
-## 1. Warum Yandex statt GitHub für Windows Installation?
+## 1. Warum Cloud.ru/Yandex statt GitHub für Windows Installation?
 
-- **Privatsphäre:** Dein festes Passwort ist im finalen Skript (für `net user`) — es darf nicht öffentlich auf GitHub stehen. Yandex Object Storage Bucket ist **privat** (ACL private) oder zeitlich begrenzt via presigned URL.
-- **Kontrolle:** Du kontrollierst Bucket-Zugriff (IAM, Löschung nach Installation).
+- **Privatsphäre:** Dein festes Passwort ist im finalen Skript — es darf nicht auf GitHub stehen. Cloud.ru Object Storage (https://s3.cloud.ru, 15 GB Free) / Yandex Bucket ist **privat** (ACL private) oder zeitlich begrenzt via presigned URL.
+- **Kontrolle:** Du kontrollierst Bucket (IAM, Löschung). Cloud.ru Free Tier deckt Skript (40KB) komplett.
 - **Aktualisierbarkeit:** Du kannst finalen Skript neu generieren und erneut hochladen, ohne GitHub Release.
 
-Das GitHub Repo enthält immer nur **Platzhalter** (`DEIN_PASSWORT`, `DEIN_YANDEX_VM_IP` etc.) — niemals echte Passwörter (`.gitignore` schützt `dist/`).
+Das GitHub Repo enthält immer nur **Platzhalter** (`DEIN_PASSWORT`, `DEIN_YANDEX_VM_IP` etc.) — niemals echte Passwörter (`.gitignore` schützt `dist/`). Standard ist jetzt Cloud.ru (https://s3.cloud.ru).
 
 ## 2. Voraussetzungen
 
@@ -19,10 +19,9 @@ Das GitHub Repo enthält immer nur **Platzhalter** (`DEIN_PASSWORT`, `DEIN_YANDE
   # oder: Download ZIP von GitHub → entpacken
   ```
 - **PowerShell 5.1+** (Windows, für Wizard) oder `pwsh` 7+ (Mac/Linux auch möglich). Für Passwort-Prompt ist PowerShell ideal.
-- **Optional für Auto-Upload:** Yandex Cloud CLI `yc` konfiguriert (`yc init`) oder AWS CLI mit Yandex S3 Keys.
-  - Service Account: `yc iam service-account create --name remotegate-storage`
-  - Rolle: `yc resource-manager folder add-access-binding --role storage.editor --subject serviceAccount:<id>`
-  - Keys: `yc iam access-key create --service-account-name remotegate-storage` → `aws configure` (Access/Secret, Region `ru-central1`, Endpoint `https://storage.yandexcloud.net`)
+- **Optional für Auto-Upload (Cloud.ru, empfohlen):** AWS CLI mit Cloud.ru Keys (Console → IAM → Zugriffsschlüssel) → `aws configure` (Region `ru-moscow-1`, Endpoint `https://s3.cloud.ru`)
+  - **Oder Yandex:** `yc` CLI (`yc init`) → `yc iam service-account create` + `storage.editor` + `yc iam access-key create` → `aws configure` Endpoint `https://storage.yandexcloud.net`
+  - Wizard fragt beim Start: [1] Cloud.ru / [2] Yandex — wähle 1 für Free Tier.
 
 ## 3. Wizard starten
 
@@ -52,11 +51,12 @@ Yandex VM öffentliche IP (z.B. 51.250.12.34, leer = Platzhalter): 51.250.12.34
 Yandex VM Tunnel Benutzer [tunneluser]: tunneluser
 Yandex SSH Port [22]:
 Reverse Tunnel Port auf VM [2222]:
-Yandex Object Storage Bucket für Final-Skript (z.B. my-remotegate-bucket): my-remotegate-bucket
+Cloud Anbieter? [1] Cloud.ru (Free Tier, https://s3.cloud.ru) [2] Yandex (https://storage.yandexcloud.net) [1/2, Enter=Cloud.ru]: 1
+Object Storage Bucket für Final-Skript (z.B. my-remotegate-bucket, Cloud.ru) [my-remotegate-bucket]: my-remotegate-bucket
 Status Endpoint (HTTPS) konfigurieren? (j/N): N
 Windows Hostname [DESKTOP-XYZ]:
 ```
-
+- **Cloud Anbieter-Abfrage neu:** Wizard fragt jetzt `[1] Cloud.ru / [2] Yandex` — Standard Cloud.ru (Free Tier 146 ₽/Mo IP). Wähle 2 nur falls du Yandex bevorzugst.
 - Alles kann leer bleiben → Platzhalter bleibt, du editierst später `config.json` auf Windows.
 - **Bucket:** Wird für Auto-Upload verwendet. Existiert er nicht, Wizard erstellt ihn via `yc`.
 
@@ -83,14 +83,16 @@ Wenn Bucket angegeben:
 [PASS] Upload via yc erfolgreich!
 Bucket: my-remotegate-bucket
 URLs:
-  https://storage.yandexcloud.net/my-remotegate-bucket/RemoteGate-Final.ps1
-  https://my-remotegate-bucket.storage.yandexcloud.net/RemoteGate-Final.ps1
+  https://my-remotegate-bucket.s3.cloud.ru/RemoteGate-Final.ps1  (Cloud.ru, Free Tier)
+  https://storage.yandexcloud.net/my-remotegate-bucket/RemoteGate-Final.ps1  (Yandex Alternative)
+  https://s3.cloud.ru/my-remotegate-bucket/RemoteGate-Final.ps1  (Cloud.ru Alt)
 
 Presigned URL (privat, gültig 168 Stunden):
   https://storage.yandexcloud.net/...?X-Amz-Signature=...
 
 Windows Install (presigned, privat):
-  $url="https://storage...?X-Amz..."
+  Cloud.ru: aws s3 presign s3://my-bucket/RemoteGate-Final.ps1 --endpoint-url https://s3.cloud.ru
+  Yandex:  $url="https://storage...?X-Amz..."
   Invoke-WebRequest -Uri $url -OutFile $env:TEMP\RemoteGate-Final.ps1
   & $env:TEMP\RemoteGate-Final.ps1
 ```
@@ -99,9 +101,19 @@ Windows Install (presigned, privat):
 - Bei `-MakePublic` → öffentliche URL (Wartung: nach Installation löschen!).
 - Ohne yc/aws → manuelle Anleitung (YC Console → Object Storage → Upload).
 
-## 4. Windows Installation (aus Yandex)
+## 4. Windows Installation (aus Cloud.ru — Free Tier, oder Yandex)
 
-**Als Administrator** auf Windows PC:
+**Als Administrator** auf Windows PC (Cloud.ru default):
+
+```powershell
+# Variante A: Cloud.ru privat (presigned, empfohlen):
+$url="https://my-bucket.s3.cloud.ru/RemoteGate-Final.ps1?X-Amz-Signature=..."
+Invoke-WebRequest -Uri $url -OutFile $env:TEMP\RemoteGate-Final.ps1
+& $env:TEMP\RemoteGate-Final.ps1
+# Presign: aws s3 presign s3://my-bucket/RemoteGate-Final.ps1 --endpoint-url https://s3.cloud.ru --expires-in 604800
+```
+
+**Alternativ Yandex als Administrator:**
 
 ```powershell
 # Variante A: Private (presigned, empfohlen):
@@ -129,19 +141,21 @@ Der finale Skript macht alles in einem Rutsch (kein Download von GitHub nötig):
 
 **Nicht mehr nötig:** `notepad config.json` + manuelles `ssh-keyscan` — Wizard hat bereits alles vor-konfiguriert!
 
-## 5. Vorab: Yandex VM + Bucket erstellen
+## 5. Vorab: Cloud.ru VM + Bucket erstellen (Free Tier)
 
-Siehe `docs/YANDEX-CLOUD-SETUP.md` für VM. Für Bucket zusätzlich:
+Siehe `docs/CLOUDRU-VM-GUIDE.md` für VM (Free Tier 15 GB S3). Für Bucket:
 
 ```bash
-# Via yc:
+# Cloud.ru (empfohlen, Free Tier):
+aws s3 mb s3://my-remotegate-bucket --endpoint-url https://s3.cloud.ru
+# Keys aus console.cloud.ru → IAM → Service Account → Zugriffsschlüssel
+
+# Yandex (Alternative):
 yc storage bucket create --name my-remotegate-bucket --default-storage-class standard
 
-# Via Terraform (erweitert in cloud/infrastructure/):
-# In cloud/storage/ oder cloud/infrastructure/Bucket hinzufügen (siehe cloud/storage/README.md)
+# Terraform Cloud.ru: cd cloud/storage && terraform init && terraform apply -var="bucket_name=..."
 ```
-
-Oder Wizard erstellt Bucket automatisch beim ersten Upload.
+Oder Wizard erstellt Bucket beim ersten Upload. Legacy Yandex: `docs/YANDEX-CLOUD-SETUP.md`.
 
 ## 6. Non-Interactive (Automation)
 

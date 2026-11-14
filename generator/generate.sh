@@ -127,6 +127,8 @@ CFG_YandexVmUser=""
 CFG_YandexVmPort=""
 CFG_ReverseTunnelPort=""
 CFG_YandexBucket=""
+CFG_CloudProvider=""
+CFG_CloudEndpoint=""
 CFG_StatusEndpoint=""
 CFG_HmacSecret=""
 CFG_StatusEnabled=""
@@ -143,6 +145,8 @@ if [[ -n "$CONFIG_FILE" && -f "$CONFIG_FILE" ]]; then
     CFG_YandexVmPort=$(jq -r '."YandexVmPort" // empty' "$CONFIG_FILE" 2>/dev/null || true)
     CFG_ReverseTunnelPort=$(jq -r '."ReverseTunnelPort" // empty' "$CONFIG_FILE" 2>/dev/null || true)
     CFG_YandexBucket=$(jq -r '."YandexBucket" // empty' "$CONFIG_FILE" 2>/dev/null || true)
+    CFG_CloudProvider=$(jq -r '."CloudProvider" // .CloudBucket // empty' "$CONFIG_FILE" 2>/dev/null || true)
+    CFG_CloudEndpoint=$(jq -r '."CloudEndpoint" // .S3Endpoint // empty' "$CONFIG_FILE" 2>/dev/null || true)
     CFG_StatusEndpoint=$(jq -r '."StatusEndpoint" // empty' "$CONFIG_FILE" 2>/dev/null || true)
     CFG_HmacSecret=$(jq -r '."HmacSecret" // empty' "$CONFIG_FILE" 2>/dev/null || true)
     CFG_StatusEnabled=$(jq -r '."StatusEnabled" // empty' "$CONFIG_FILE" 2>/dev/null || true)
@@ -156,6 +160,8 @@ if [[ -n "$CONFIG_FILE" && -f "$CONFIG_FILE" ]]; then
     CFG_YandexVmPort=$(json_get "$CONFIG_FILE" "YandexVmPort")
     CFG_ReverseTunnelPort=$(json_get "$CONFIG_FILE" "ReverseTunnelPort")
     CFG_YandexBucket=$(json_get "$CONFIG_FILE" "YandexBucket")
+    CFG_CloudProvider=$(json_get "$CONFIG_FILE" "CloudProvider")
+    CFG_CloudEndpoint=$(json_get "$CONFIG_FILE" "CloudEndpoint")
     CFG_StatusEndpoint=$(json_get "$CONFIG_FILE" "StatusEndpoint")
     CFG_HmacSecret=$(json_get "$CONFIG_FILE" "HmacSecret")
     CFG_StatusEnabled=$(json_get "$CONFIG_FILE" "StatusEnabled")
@@ -165,10 +171,14 @@ if [[ -n "$CONFIG_FILE" && -f "$CONFIG_FILE" ]]; then
     log_warn "Kein jq/python3 — Prefill übersprungen"
   fi
   # Clean "null" strings from jq
-  for v in CFG_WindowsUser CFG_WindowsPassword CFG_YandexVmIp CFG_YandexVmUser CFG_YandexVmPort CFG_ReverseTunnelPort CFG_YandexBucket CFG_StatusEndpoint CFG_HmacSecret CFG_StatusEnabled CFG_Hostname CFG_DeviceId; do
+  for v in CFG_WindowsUser CFG_WindowsPassword CFG_YandexVmIp CFG_YandexVmUser CFG_YandexVmPort CFG_ReverseTunnelPort CFG_YandexBucket CFG_CloudProvider CFG_CloudEndpoint CFG_StatusEndpoint CFG_HmacSecret CFG_StatusEnabled CFG_Hostname CFG_DeviceId; do
     eval "val=\$$v"
     if [[ "$val" == "null" ]]; then eval "$v=\"\""; fi
   done
+  # Backward compat: YandexBucket alias for Yandex-era configs
+  if [[ -z "$CFG_CloudEndpoint" && -n "$CFG_YandexBucket" ]]; then
+    : # keep bucket
+  fi
 fi
 
 # Defaults — Bash 3.2 safe (no associative array)
@@ -182,6 +192,8 @@ if [[ -n "$CFG_Hostname" ]]; then DEFAULT_HOST="$CFG_Hostname"; else DEFAULT_HOS
 if [[ -n "$CFG_DeviceId" && "$CFG_DeviceId" != "REPLACE_WITH_UUID" ]]; then DEVICE_ID="$CFG_DeviceId"; else DEVICE_ID="$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid 2>/dev/null || python3 -c "import uuid;print(uuid.uuid4())" 2>/dev/null || echo "REPLACE_WITH_UUID")"; fi
 if [[ -n "$CFG_StatusEndpoint" ]]; then STATUS_ENDPOINT="$CFG_StatusEndpoint"; else STATUS_ENDPOINT=""; fi
 if [[ -n "$CFG_HmacSecret" ]]; then HMAC_SECRET="$CFG_HmacSecret"; else HMAC_SECRET=""; fi
+if [[ -n "$CFG_CloudProvider" ]]; then DEFAULT_PROVIDER="$CFG_CloudProvider"; else DEFAULT_PROVIDER="cloudru"; fi
+if [[ -n "$CFG_CloudEndpoint" ]]; then DEFAULT_ENDPOINT="$CFG_CloudEndpoint"; else DEFAULT_ENDPOINT="https://s3.cloud.ru"; fi
 DEVICE_ID="$(echo "$DEVICE_ID" | tr -d '[:space:]')"
 
 if [[ "$NON_INTERACTIVE" == "false" ]]; then
@@ -200,7 +212,7 @@ if [[ "$NON_INTERACTIVE" == "false" ]]; then
 
   if WINDOWS_PASSWORD=$(read_secret "Festes Passwort für Windows SSH (verdeckt, leer=nur Key-Auth)"); then
     USE_PASSWORD_AUTH=true
-    log_ok "Passwort gesetzt (privat, nur im Yandex-Skript)!  (${#WINDOWS_PASSWORD} Zeichen erfasst)"
+    log_ok "Passwort gesetzt (privat, nur im Cloud-Skript)!  (${#WINDOWS_PASSWORD} Zeichen erfasst)"
   else
     WINDOWS_PASSWORD="DEIN_PASSWORT"
     USE_PASSWORD_AUTH=false
@@ -208,16 +220,28 @@ if [[ "$NON_INTERACTIVE" == "false" ]]; then
   fi
 
   echo ""
-  echo -e "\033[32m── Schritt 2: Yandex Zugang ──\033[0m"
+  echo -e "\033[32m── Schritt 2: Cloud Zugang (Cloud.ru Free Tier) ──\033[0m"
+  echo -e "\033[36m  Cloud.ru: Free Tier VM 2vCPU/4GB + 15GB S3 gratis, nur IP ~146 ₽/Mo\033[0m"
+  # Cloud provider choice
+  echo "  Anbieter: [1] Cloud.ru (https://s3.cloud.ru, Free Tier) [2] Yandex (https://storage.yandexcloud.net)"
+  prov=$(read_input "  Wähle Anbieter [1/2, Enter=Cloud.ru]" "$DEFAULT_PROVIDER")
+  case "$prov" in
+    2|yandex|Yandex) CLOUD_PROVIDER="yandex"; CLOUD_ENDPOINT="https://storage.yandexcloud.net" ;;
+    *) CLOUD_PROVIDER="cloudru"; CLOUD_ENDPOINT="https://s3.cloud.ru" ;;
+  esac
+  # Also allow custom endpoint
+  if [[ "$CLOUD_PROVIDER" == "cloudru" ]]; then CLOUD_ENDPOINT="https://s3.cloud.ru"; else CLOUD_ENDPOINT="https://storage.yandexcloud.net"; fi
+  log_info "Anbieter: $CLOUD_PROVIDER → $CLOUD_ENDPOINT"
+
   if [[ -z "$DEFAULT_IP" || "$DEFAULT_IP" == "null" ]]; then DEFAULT_IP=""; fi
-  YANDEX_VM_IP=$(read_input "Yandex VM öffentliche IP (z.B. 51.250.12.34, leer=Platzhalter)" "$DEFAULT_IP")
+  YANDEX_VM_IP=$(read_input "Cloud VM öffentliche IP (z.B. 51.250.12.34, leer=Platzhalter)" "$DEFAULT_IP")
   if [[ -z "$YANDEX_VM_IP" ]]; then YANDEX_VM_IP="DEIN_YANDEX_VM_IP"; fi
-  YANDEX_VM_USER=$(read_input "Yandex VM Tunnel Benutzer" "$DEFAULT_VMUSER")
-  tmp=$(read_input "Yandex SSH Port" "$DEFAULT_VMPORT"); case "$tmp" in ''|*[!0-9]* ) ;; *) DEFAULT_VMPORT="$tmp";; esac
+  YANDEX_VM_USER=$(read_input "Cloud VM Tunnel Benutzer" "$DEFAULT_VMUSER")
+  tmp=$(read_input "Cloud SSH Port" "$DEFAULT_VMPORT"); case "$tmp" in ''|*[!0-9]* ) ;; *) DEFAULT_VMPORT="$tmp";; esac
   YANDEX_VM_PORT="$DEFAULT_VMPORT"
   tmp=$(read_input "Reverse Tunnel Port auf VM" "$DEFAULT_TUNPORT"); case "$tmp" in ''|*[!0-9]* ) ;; *) DEFAULT_TUNPORT="$tmp";; esac
   REVERSE_TUNNEL_PORT="$DEFAULT_TUNPORT"
-  YANDEX_BUCKET=$(read_input "Yandex Object Storage Bucket (z.B. my-remotegate-bucket, leer=kein Auto-Upload)" "$DEFAULT_BUCKET")
+  YANDEX_BUCKET=$(read_input "Object Storage Bucket für Final-Skript (z.B. my-remotegate-bucket, leer=kein Auto-Upload) — $CLOUD_PROVIDER" "$DEFAULT_BUCKET")
   read -p "Status Endpoint (HTTPS) konfigurieren? (j/N): " ask
   if [[ "$ask" == "j" || "$ask" == "J" || "$ask" == "y" ]]; then
     STATUS_ENDPOINT=$(read_input "Status Endpoint URL" "$STATUS_ENDPOINT")
@@ -239,10 +263,15 @@ else
   YANDEX_VM_PORT="$DEFAULT_VMPORT"
   REVERSE_TUNNEL_PORT="$DEFAULT_TUNPORT"
   YANDEX_BUCKET="$DEFAULT_BUCKET"
+  CLOUD_PROVIDER="${DEFAULT_PROVIDER:-cloudru}"
+  CLOUD_ENDPOINT="${DEFAULT_ENDPOINT:-https://s3.cloud.ru}"
+  # Override if config had explicit cloud endpoint
+  if [[ -n "$CFG_CloudProvider" ]]; then CLOUD_PROVIDER="$CFG_CloudProvider"; fi
+  if [[ -n "$CFG_CloudEndpoint" ]]; then CLOUD_ENDPOINT="$CFG_CloudEndpoint"; fi
   HOSTNAME="$DEFAULT_HOST"
   STATUS_ENABLED='$false'
   if [[ -n "$CFG_StatusEndpoint" ]]; then STATUS_ENDPOINT="$CFG_StatusEndpoint"; fi
-  log_info "NonInteractive: User=$WINDOWS_USER IP=$YANDEX_VM_IP PassAuth=$USE_PASSWORD_AUTH"
+  log_info "NonInteractive: User=$WINDOWS_USER IP=$YANDEX_VM_IP Bucket=$YANDEX_BUCKET Provider=$CLOUD_PROVIDER PassAuth=$USE_PASSWORD_AUTH"
 fi
 
 if [[ -z "${YANDEX_BUCKET:-}" ]]; then YANDEX_BUCKET=""; fi
@@ -318,6 +347,10 @@ cache = {
     "YandexVmPort": $YANDEX_VM_PORT,
     "ReverseTunnelPort": $REVERSE_TUNNEL_PORT,
     "YandexBucket": """$YANDEX_BUCKET""",
+    "CloudBucket": """$YANDEX_BUCKET""",
+    "CloudProvider": """$CLOUD_PROVIDER""",
+    "CloudEndpoint": """$CLOUD_ENDPOINT""",
+    "S3Endpoint": """$CLOUD_ENDPOINT""",
     "StatusEndpoint": """$STATUS_ENDPOINT""",
     "StatusEnabled": $STATUS_ENABLED_PY,
     "Hostname": """$HOSTNAME""",
@@ -334,32 +367,44 @@ if [[ "$USE_PASSWORD_AUTH" == "true" ]]; then
   echo ""
   echo -e "\033[33m⚠️  WICHTIG: Passwort ist im FINALEN Skript ($OUTPUT_PATH)\033[0m"
   echo -e "\033[33m   — Niemals zu GitHub pushen (dist/ in .gitignore)!\033[0m"
-  echo -e "\033[33m   — Nur in privaten Yandex Bucket!\033[0m"
+  echo -e "\033[33m   — Nur in privaten $CLOUD_PROVIDER Bucket ($CLOUD_ENDPOINT)!\033[0m"
 else
   echo ""
   echo -e "\033[36mℹ️  Kein Passwort — Key-only (PasswordAuthentication no)\033[0m"
 fi
 
 echo ""
-echo -e "\033[32m── Schritt 4: Upload nach Yandex ──\033[0m"
+echo -e "\033[32m── Schritt 4: Upload nach $CLOUD_PROVIDER ──\033[0m"
 if [[ "$SKIP_UPLOAD" == "true" ]]; then
   log_warn "SkipUpload — kein Upload"
 elif [[ -z "$YANDEX_BUCKET" ]]; then
   log_warn "Kein Bucket — Upload übersprungen"
-  echo "Manuell: ./generator/Upload-ToYandex.ps1 -FilePath \"$OUTPUT_PATH\" -Bucket \"<bucket>\""
-  echo "Oder: yc storage s3api put-object --bucket <bucket> --key RemoteGate-Final.ps1 --body \"$OUTPUT_PATH\""
+  echo "Manuell: ./generator/Upload-ToCloud.ps1 -FilePath \"$OUTPUT_PATH\" -Bucket \"<bucket>\" -Endpoint \"$CLOUD_ENDPOINT\""
+  echo "Oder: aws s3 cp \"$OUTPUT_PATH\" \"s3://<bucket>/RemoteGate-Final.ps1\" --endpoint-url \"$CLOUD_ENDPOINT\""
 else
-  log_info "Versuche Upload nach $YANDEX_BUCKET ..."
-  UPLOADER_PS="$SCRIPT_DIR/Upload-ToYandex.ps1"
-  if command -v pwsh >/dev/null 2>&1; then
-    pwsh -File "$UPLOADER_PS" -FilePath "$OUTPUT_PATH" -Bucket "$YANDEX_BUCKET" || log_warn "Upload via pwsh fehlgeschlagen"
-  elif command -v powershell >/dev/null 2>&1; then
-    powershell -File "$UPLOADER_PS" -FilePath "$OUTPUT_PATH" -Bucket "$YANDEX_BUCKET" || log_warn "Upload via powershell fehlgeschlagen"
+  log_info "Versuche Upload nach $CLOUD_PROVIDER Bucket $YANDEX_BUCKET ($CLOUD_ENDPOINT) ..."
+  UPLOADER_PS="$SCRIPT_DIR/Upload-ToCloud.ps1"
+  if [[ -f "$UPLOADER_PS" ]]; then
+    if command -v pwsh >/dev/null 2>&1; then
+      pwsh -File "$UPLOADER_PS" -FilePath "$OUTPUT_PATH" -Bucket "$YANDEX_BUCKET" -Endpoint "$CLOUD_ENDPOINT" || log_warn "Upload via pwsh fehlgeschlagen"
+    elif command -v powershell >/dev/null 2>&1; then
+      powershell -File "$UPLOADER_PS" -FilePath "$OUTPUT_PATH" -Bucket "$YANDEX_BUCKET" -Endpoint "$CLOUD_ENDPOINT" || log_warn "Upload via powershell fehlgeschlagen"
+    else
+      log_warn "Kein pwsh — versuche yc/aws direkt"
+      if [[ "$CLOUD_PROVIDER" == "yandex" ]] && command -v yc >/dev/null 2>&1; then
+        yc storage s3api put-object --bucket "$YANDEX_BUCKET" --key RemoteGate-Final.ps1 --body "$OUTPUT_PATH" && log_ok "Upload via yc erfolgreich"
+      elif command -v aws >/dev/null 2>&1; then
+        aws --endpoint-url "$CLOUD_ENDPOINT" s3 cp "$OUTPUT_PATH" "s3://$YANDEX_BUCKET/RemoteGate-Final.ps1" && log_ok "Upload via aws ($CLOUD_PROVIDER) erfolgreich"
+      else
+        log_warn "Kein Uploader (yc/aws/pwsh). Manuell: aws s3 cp --endpoint-url $CLOUD_ENDPOINT"
+      fi
+    fi
   else
-    if command -v yc >/dev/null 2>&1; then
+    # Fallback legacy
+    if [[ "$CLOUD_PROVIDER" == "yandex" ]] && command -v yc >/dev/null 2>&1; then
       yc storage s3api put-object --bucket "$YANDEX_BUCKET" --key RemoteGate-Final.ps1 --body "$OUTPUT_PATH" && log_ok "Upload via yc erfolgreich"
     elif command -v aws >/dev/null 2>&1; then
-      aws --endpoint-url https://storage.yandexcloud.net s3 cp "$OUTPUT_PATH" "s3://$YANDEX_BUCKET/RemoteGate-Final.ps1" && log_ok "Upload via aws erfolgreich"
+      aws --endpoint-url "$CLOUD_ENDPOINT" s3 cp "$OUTPUT_PATH" "s3://$YANDEX_BUCKET/RemoteGate-Final.ps1" && log_ok "Upload via aws erfolgreich"
     else
       log_warn "Kein Uploader gefunden (yc/aws/pwsh). Manuell hochladen."
     fi
@@ -369,32 +414,38 @@ fi
 cat <<EOF
 
 ════════════════════════════════════════════════════════════
-  ✅ GENERATOR FERTIG (Mac Bash) — FINALER INSTALLER BEREIT
+  ✅ GENERATOR FERTIG (Mac Bash) — FINALER INSTALLER BEREIT ($CLOUD_PROVIDER)
 ════════════════════════════════════════════════════════════
   Lokal: $OUTPUT_PATH
 EOF
 if [[ -n "$YANDEX_BUCKET" ]]; then
-  YANDEX_URL="https://storage.yandexcloud.net/$YANDEX_BUCKET/RemoteGate-Final.ps1"
-  YANDEX_URL_ALT="https://$YANDEX_BUCKET.storage.yandexcloud.net/RemoteGate-Final.ps1"
+  if [[ "$CLOUD_PROVIDER" == "cloudru" ]]; then
+    CLOUD_URL="https://$YANDEX_BUCKET.s3.cloud.ru/RemoteGate-Final.ps1"
+    CLOUD_URL_ALT="https://s3.cloud.ru/$YANDEX_BUCKET/RemoteGate-Final.ps1"
+  else
+    CLOUD_URL="https://storage.yandexcloud.net/$YANDEX_BUCKET/RemoteGate-Final.ps1"
+    CLOUD_URL_ALT="https://$YANDEX_BUCKET.storage.yandexcloud.net/RemoteGate-Final.ps1"
+  fi
   cat <<EOF
-  Yandex URLs:
-    $YANDEX_URL
-    $YANDEX_URL_ALT
+  $CLOUD_PROVIDER URLs:
+    $CLOUD_URL
+    $CLOUD_URL_ALT
 
-  🖥️  WINDOWS INSTALL (aus Yandex, nicht GitHub):
+  🖥️  WINDOWS INSTALL (aus $CLOUD_PROVIDER, nicht GitHub):
   ┌─────────────────────────────────────────────────────────┐
   │ PowerShell als Administrator, dann:
-  │ \$url="$YANDEX_URL"
+  │ \$url="$CLOUD_URL"
   │ Invoke-WebRequest -Uri \$url -OutFile \$env:TEMP\\RemoteGate-Final.ps1
   │ & \$env:TEMP\\RemoteGate-Final.ps1
   └─────────────────────────────────────────────────────────┘
 
-  Einzeiler: irm $YANDEX_URL -OutFile \$env:TEMP\\RemoteGate-Final.ps1; & \$env:TEMP\\RemoteGate-Final.ps1
+  Einzeiler: irm $CLOUD_URL -OutFile \$env:TEMP\\RemoteGate-Final.ps1; & \$env:TEMP\\RemoteGate-Final.ps1
+  Presigned (privat): aws s3 presign s3://$YANDEX_BUCKET/RemoteGate-Final.ps1 --endpoint-url $CLOUD_ENDPOINT --expires-in 604800
 EOF
   echo -e "\033[33m  ⚠️  Privater Bucket — presigned URL für Download nutzen!\033[0m"
 else
   cat <<EOF
-  Kein Yandex Bucket — lokal übertragen:
+  Kein Bucket — lokal übertragen:
     scp "$OUTPUT_PATH" WINDOWS-PC:/tmp/RemoteGate-Final.ps1
     # Auf Windows als Admin: & C:\\tmp\\RemoteGate-Final.ps1
 EOF

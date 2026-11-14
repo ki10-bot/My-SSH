@@ -141,15 +141,18 @@ if ($ConfigFile -and (Test-Path $ConfigFile)) {
 }
 
 # === Interactive prompts (unless NonInteractive) ===
+# Cloud provider: Cloud.ru (default) or Yandex (legacy). Wizard now defaults to Cloud.ru.
+$CloudProvider = "cloudru"  # cloudru | yandex
+$CloudEndpoint = "https://s3.cloud.ru"  # Cloud.ru default; Yandex: https://storage.yandexcloud.net
 $WindowsUser = $null
 $WindowsPassword = $null
 $WindowsPasswordConfirm = $null
 $UsePasswordAuth = $false
-$YandexVmIp = $null
+$YandexVmIp = $null  # Keep name for backward compat — actually CloudVmIp (Cloud.ru or Yandex)
 $YandexVmUser = "tunneluser"
 $YandexVmPort = 22
 $ReverseTunnelPort = 2222
-$YandexBucket = $null
+$YandexBucket = $null  # Cloud/Storage bucket (Cloud.ru default)
 $StatusEndpoint = ""
 $HmacSecret = ""
 $StatusEnabled = $false
@@ -222,10 +225,26 @@ if (-not $NonInteractive) {
     $inputTunPort = Read-Host "Reverse Tunnel Port auf VM [$ReverseTunnelPort]"
     if ($inputTunPort -and $inputTunPort -match "^\d+$") { $ReverseTunnelPort = [int]$inputTunPort }
 
-    $defaultBucket = if ($prefill.YandexBucket) { $prefill.YandexBucket } else { "" }
-    $inputBucket = Read-Host "Yandex Object Storage Bucket für Final-Skript (z.B. my-remotegate-bucket, leer = kein Auto-Upload)"
+    # Cloud provider choice (default Cloud.ru)
+    $defaultEndpoint = if ($prefill.CloudEndpoint) { $prefill.CloudEndpoint } elseif ($prefill.S3Endpoint) { $prefill.S3Endpoint } else { "https://s3.cloud.ru" }
+    $inputEndpoint = Read-Host "Cloud Anbieter? [1] Cloud.ru (Free Tier, https://s3.cloud.ru) [2] Yandex (https://storage.yandexcloud.net) [1/2, Enter=Cloud.ru]"
+    if ($inputEndpoint -eq "2" -or $inputEndpoint -match "yandex") {
+        $CloudProvider = "yandex"; $CloudEndpoint = "https://storage.yandexcloud.net"
+        Write-WizardLog "Anbieter: Yandex ($CloudEndpoint)" "INFO"
+    } elseif ($inputEndpoint -eq "1" -or -not $inputEndpoint) {
+        $CloudProvider = "cloudru"; $CloudEndpoint = "https://s3.cloud.ru"
+        Write-WizardLog "Anbieter: Cloud.ru (Free Tier) → $CloudEndpoint" "PASS"
+    } elseif ($inputEndpoint -match "https?://") {
+        $CloudEndpoint = $inputEndpoint; $CloudProvider = if ($CloudEndpoint -match "yandex") { "yandex" } else { "cloudru" }
+        Write-WizardLog "Anbieter: Custom $CloudEndpoint"
+    } else {
+        $CloudProvider = "cloudru"; $CloudEndpoint = $defaultEndpoint
+    }
+
+    $defaultBucket = if ($prefill.YandexBucket) { $prefill.YandexBucket } elseif ($prefill.CloudBucket) { $prefill.CloudBucket } else { "" }
+    $inputBucket = Read-Host "Object Storage Bucket für Final-Skript (z.B. my-remotegate-bucket, leer = kein Auto-Upload) — $CloudProvider"
     $YandexBucket = if ($inputBucket) { $inputBucket } elseif ($defaultBucket) { $defaultBucket } else { "" }
-    if ($YandexBucket) { Write-WizardLog "Bucket: $YandexBucket — Upload wird versucht." }
+    if ($YandexBucket) { Write-WizardLog "Bucket: $YandexBucket ($CloudProvider) — Upload wird versucht via $CloudEndpoint." }
 
     # Optional Status
     $askStatus = Read-Host "Status Endpoint (HTTPS) konfigurieren? (j/N)"
@@ -325,11 +344,15 @@ Write-Host "  DeviceId: $DeviceId" -ForegroundColor Cyan
 # Save a redacted version for next wizard run
 $redactedPrefill = @{
     WindowsUser = $WindowsUser
-    YandexVmIp = $YandexVmIp
+    YandexVmIp = $YandexVmIp  # backward compat — actually CloudVmIp
     YandexVmUser = $YandexVmUser
     YandexVmPort = $YandexVmPort
     ReverseTunnelPort = $ReverseTunnelPort
     YandexBucket = $YandexBucket
+    CloudBucket = $YandexBucket
+    CloudProvider = $CloudProvider
+    CloudEndpoint = $CloudEndpoint
+    S3Endpoint = $CloudEndpoint
     StatusEndpoint = $StatusEndpoint
     StatusEnabled = $StatusEnabled
     Hostname = $Hostname
@@ -347,7 +370,7 @@ Write-WizardLog "Prefill-Cache (ohne Passwort) gespeichert: $prefillPath"
 if ($UsePasswordAuth) {
     Write-Host "`n⚠️  WICHTIG: Dein Passwort ist jetzt im FINALEN Skript ($DefaultOutput)" -ForegroundColor Yellow
     Write-Host "   — Dieses Skript darf NIEMALS auf GitHub gepusht werden (ist in .gitignore)!" -ForegroundColor Yellow
-    Write-Host "   — Lege es nur in deinen PRIVATEN Yandex Bucket." -ForegroundColor Yellow
+    Write-Host "   — Lege es nur in deinen PRIVATEN Bucket ($CloudProvider): $CloudEndpoint." -ForegroundColor Yellow
     Write-Host "   — Lösche lokale Kopie nach Upload, oder bewahre sicher auf." -ForegroundColor Yellow
     # Try to clear password variable
     try { $WindowsPassword = $null; $replacements["__WINDOWS_PASSWORD__"] = "***" } catch {}
@@ -356,29 +379,33 @@ if ($UsePasswordAuth) {
     Write-Host "   PasswordAuthentication bleibt 'no'. Du kannst später Passwort hinzufügen." -ForegroundColor Gray
 }
 
-# === Step 4: Yandex Upload ===
-Write-Host "`n── Schritt 4: Upload nach Yandex Object Storage ──" -ForegroundColor Green
+# === Step 4: Upload (Cloud.ru default, Yandex legacy) ===
+Write-Host "`n── Schritt 4: Upload nach $CloudProvider Object Storage ──" -ForegroundColor Green
 if ($SkipUpload) {
     Write-WizardLog "SkipUpload gesetzt — kein Upload." "WARN"
 } elseif (-not $YandexBucket) {
     Write-WizardLog "Kein Bucket angegeben — Upload übersprungen." "WARN"
     Write-Host "  Du kannst später manuell hochladen:" -ForegroundColor White
-    Write-Host "    yc storage s3api put-object --bucket $YandexBucket --key RemoteGate-Final.ps1 --body $DefaultOutput" -ForegroundColor Gray
-    Write-Host "  Oder: .\generator\Upload-ToYandex.ps1 -FilePath `"$DefaultOutput`" -Bucket `"<bucket>`"" -ForegroundColor Gray
+    Write-Host "    Cloud.ru: aws s3 cp `"$DefaultOutput`" s3://<bucket>/RemoteGate-Final.ps1 --endpoint-url $CloudEndpoint" -ForegroundColor Gray
+    Write-Host "    Yandex:   yc storage s3api put-object --bucket <bucket> --key RemoteGate-Final.ps1 --body $DefaultOutput" -ForegroundColor Gray
+    Write-Host "  Oder: .\generator\Upload-ToCloud.ps1 -FilePath `"$DefaultOutput`" -Bucket `"<bucket>`" -Endpoint `"$CloudEndpoint`"" -ForegroundColor Gray
 } else {
-    Write-WizardLog "Versuche Upload nach Yandex Bucket: $YandexBucket ..."
-    $uploader = Join-Path $GeneratorDir "Upload-ToYandex.ps1"
+    Write-WizardLog "Versuche Upload nach $CloudProvider Bucket: $YandexBucket ($CloudEndpoint) ..."
+    # Prefer Upload-ToCloud (Cloud.ru + Yandex), fallback to Upload-ToYandex legacy
+    $uploader = Join-Path $GeneratorDir "Upload-ToCloud.ps1"
+    if (-not (Test-Path $uploader)) { $uploader = Join-Path $GeneratorDir "Upload-ToYandex.ps1" }
     if (Test-Path $uploader) {
         try {
-            # Call uploader with explicit params (it handles yc / aws cli detection)
-            $uploadResult = & $uploader -FilePath $DefaultOutput -Bucket $YandexBucket -MakePrivate
+            # Call uploader with explicit params (it handles Cloud.ru / Yandex)
+            $uploadParams = @{ FilePath = $DefaultOutput; Bucket = $YandexBucket }
+            if ($uploader -match "Upload-ToCloud") { $uploadParams["Endpoint"] = $CloudEndpoint }
+            $uploadResult = & $uploader @uploadParams
             Write-WizardLog "Uploader ausgeführt." "PASS"
-            # Uploader should output URL info
             if ($uploadResult) { Write-Host $uploadResult -ForegroundColor White }
         } catch {
             Write-WizardLog "Upload fehlgeschlagen: $_" "ERROR"
-            Write-Host "  Prüfe yc CLI: yc config list; yc storage bucket list" -ForegroundColor Yellow
-            Write-Host "  Manuell: aws --endpoint-url https://storage.yandexcloud.net s3 cp `"$DefaultOutput`" s3://$YandexBucket/RemoteGate-Final.ps1" -ForegroundColor White
+            Write-Host "  Cloud.ru: aws s3 cp `"$DefaultOutput`" s3://$YandexBucket/RemoteGate-Final.ps1 --endpoint-url $CloudEndpoint" -ForegroundColor White
+            Write-Host "  Yandex:   yc storage s3api put-object --bucket $YandexBucket --key RemoteGate-Final.ps1 --body $DefaultOutput" -ForegroundColor White
         }
     } else {
         Write-WizardLog "Uploader nicht gefunden: $uploader" "WARN"
@@ -406,49 +433,53 @@ if ($SkipUpload) {
 
 # === Final output: Windows command ===
 Write-Host "`n════════════════════════════════════════════════════════════" -ForegroundColor Cyan
-Write-Host "  ✅ GENERATOR FERTIG — FINALER INSTALLER BEREIT" -ForegroundColor Green
+Write-Host "  ✅ GENERATOR FERTIG — FINALER INSTALLER BEREIT ($CloudProvider)" -ForegroundColor Green
 Write-Host "════════════════════════════════════════════════════════════" -ForegroundColor Cyan
 Write-Host "  Lokal: $DefaultOutput" -ForegroundColor White
 if ($YandexBucket) {
-    $yandexUrl = "https://storage.yandexcloud.net/$YandexBucket/RemoteGate-Final.ps1"
-    $yandexUrlAlt = "https://$YandexBucket.storage.yandexcloud.net/RemoteGate-Final.ps1"
+    if ($CloudProvider -eq "cloudru") {
+        $cloudUrl = "https://$YandexBucket.s3.cloud.ru/RemoteGate-Final.ps1"
+        $cloudUrlAlt = "$CloudEndpoint/$YandexBucket/RemoteGate-Final.ps1"
+    } else {
+        $cloudUrl = "https://storage.yandexcloud.net/$YandexBucket/RemoteGate-Final.ps1"
+        $cloudUrlAlt = "https://$YandexBucket.storage.yandexcloud.net/RemoteGate-Final.ps1"
+    }
     Write-Host ""
-    Write-Host "  Yandex URLs (nach Upload):" -ForegroundColor Yellow
-    Write-Host "    $yandexUrl" -ForegroundColor White
-    Write-Host "    $yandexUrlAlt (alternativ)" -ForegroundColor DarkGray
+    Write-Host "  $CloudProvider URLs (nach Upload):" -ForegroundColor Yellow
+    Write-Host "    $cloudUrl" -ForegroundColor White
+    Write-Host "    $cloudUrlAlt (alternativ)" -ForegroundColor DarkGray
     Write-Host ""
-    Write-Host "  🖥️  WINDOWS INSTALLATIONS-KOMMANDO (aus Yandex, nicht GitHub):" -ForegroundColor Green
+    Write-Host "  🖥️  WINDOWS INSTALLATIONS-KOMMANDO (aus $CloudProvider, nicht GitHub):" -ForegroundColor Green
     Write-Host "  ┌─────────────────────────────────────────────────────────┐" -ForegroundColor Green
     Write-Host "  │ PowerShell als Administrator öffnen, dann:" -ForegroundColor White
     Write-Host "  │" -ForegroundColor White
-    Write-Host "  `$url=`"$yandexUrl`"" -ForegroundColor White
+    Write-Host "  `$url=`"$cloudUrl`"" -ForegroundColor White
     Write-Host "  `$out=`"`$env:TEMP\RemoteGate-Final.ps1`"" -ForegroundColor White
     Write-Host "  `Invoke-WebRequest -Uri `$url -OutFile `$out -UseBasicParsing" -ForegroundColor White
-    Write-Host "  `# Optional: Hash prüfen (falls du SHA256 veröffentlicht hast)`" -ForegroundColor DarkGray
-    Write-Host "  `# Get-FileHash `$out -Algorithm SHA256`" -ForegroundColor DarkGray
+    Write-Host "  `# Presigned wenn privat: aws s3 presign s3://$YandexBucket/RemoteGate-Final.ps1 --endpoint-url $CloudEndpoint --expires-in 604800" -ForegroundColor DarkGray
     Write-Host "  `& `$out" -ForegroundColor White
     Write-Host "  └─────────────────────────────────────────────────────────┘" -ForegroundColor Green
     Write-Host ""
     Write-Host "  Einzeiler (verifiziert + ausgeführt):" -ForegroundColor Cyan
-    Write-Host "  irm $yandexUrl -OutFile `$env:TEMP\RemoteGate-Final.ps1; & `$env:TEMP\RemoteGate-Final.ps1" -ForegroundColor White
+    Write-Host "  irm $cloudUrl -OutFile `$env:TEMP\RemoteGate-Final.ps1; & `$env:TEMP\RemoteGate-Final.ps1" -ForegroundColor White
     Write-Host ""
-    Write-Host "  ⚠️  Dieser Befehl lädt dein PRIVATES Yandex-Skript (mit Passwort) —" -ForegroundColor Yellow
+    Write-Host "  ⚠️  Dieser Befehl lädt dein PRIVATES $CloudProvider-Skript (mit Passwort) —" -ForegroundColor Yellow
     Write-Host "     nicht das öffentliche GitHub Skript. Teile URL nicht öffentlich!" -ForegroundColor Yellow
 } else {
     Write-Host ""
-    Write-Host "  Kein Yandex Bucket — lokaler Installer:" -ForegroundColor Yellow
+    Write-Host "  Kein Bucket — lokaler Installer:" -ForegroundColor Yellow
     Write-Host "  Windows Kommando (lokal übertragen, dann ausführen):" -ForegroundColor White
     Write-Host "    Copy-Item `"$DefaultOutput`" -Destination `"\\WINDOWS-PC\C$\Temp\RemoteGate-Final.ps1`"" -ForegroundColor Gray
     Write-Host "    # Auf Windows als Admin: & C:\Temp\RemoteGate-Final.ps1" -ForegroundColor Gray
     Write-Host ""
-    Write-Host "  Oder manuell zu Yandex hochladen:" -ForegroundColor White
-    Write-Host "    .\generator\Upload-ToYandex.ps1 -FilePath `"$DefaultOutput`" -Bucket `"<dein-bucket>`"" -ForegroundColor White
+    Write-Host "  Oder manuell zu Cloud hochladen:" -ForegroundColor White
+    Write-Host "    .\generator\Upload-ToCloud.ps1 -FilePath `"$DefaultOutput`" -Bucket `"<dein-bucket>`" -Endpoint `"$CloudEndpoint`"" -ForegroundColor White
 }
 Write-Host ""
 Write-Host "  Nächste Schritte:" -ForegroundColor Yellow
 Write-Host "    1. Prüfe $DefaultOutput (Passwort ist dort — nicht committen!)" -ForegroundColor White
-Write-Host "    2. Lade zu Yandex hoch (auto, falls möglich, sonst manuell)" -ForegroundColor White
-Write-Host "    3. Führe auf Windows das Yandex-Kommando aus (als Admin)" -ForegroundColor White
+Write-Host "    2. Lade zu $CloudProvider hoch (auto, falls möglich, sonst manuell)" -ForegroundColor White
+Write-Host "    3. Führe auf Windows das $CloudProvider-Kommando aus (als Admin)" -ForegroundColor White
 Write-Host "    4. Teste: ssh -J rgadmin@$YandexVmIp -p $ReverseTunnelPort $WindowsUser@127.0.0.1" -ForegroundColor White
 Write-Host "       Passwort: dein festgelegtes Passwort (nicht DEIN_PASSWORT)" -ForegroundColor White
 Write-Host "    5. Lösche lokale Kopie nach Upload, wenn nicht mehr benötigt" -ForegroundColor DarkGray

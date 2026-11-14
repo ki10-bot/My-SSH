@@ -1,85 +1,111 @@
 terraform {
   required_version = ">= 1.5"
   required_providers {
-    yandex = {
-      source  = "yandex-cloud/yandex"
-      version = "~> 0.110"
+    aws = {
+      source  = "hashicorp/aws"
+      version = "~> 5.0"
     }
   }
 }
 
-variable "yc_cloud_id" { type = string }
-variable "yc_folder_id" { type = string }
-variable "bucket_name" { type = string }
-variable "make_public" { type = bool, default = false }
+# Cloud.ru Evolution Object Storage is S3-compatible (endpoint https://s3.cloud.ru)
+# Yandex Storage (https://storage.yandexcloud.net) also works — just change endpoint.
+# Default: Cloud.ru Free Tier (15 GB free) — set via variables.
 
-provider "yandex" {
-  cloud_id  = var.yc_cloud_id
-  folder_id = var.yc_folder_id
+variable "bucket_name" {
+  type        = string
+  description = "Bucket for Cloud.ru-hosted Windows installer (globally unique). e.g. my-remotegate-bucket-uuid"
 }
 
-resource "yandex_storage_bucket" "remotegate_installer" {
-  bucket     = var.bucket_name
-  acl        = var.make_public ? "public-read" : "private"
-  # IMPORTANT: For private bucket with password-embedded script, keep private!
-  # Use presigned URLs for Windows install (see generator/Upload-ToYandex.ps1)
-  # Only use public-read if you accept that anyone with URL can download the script.
+variable "s3_endpoint" {
+  type        = string
+  default     = "https://s3.cloud.ru"
+  description = "S3 endpoint: Cloud.ru https://s3.cloud.ru (default) or Yandex https://storage.yandexcloud.net"
+}
 
-  versioning {
-    enabled = false
+variable "s3_region" {
+  type        = string
+  default     = "ru-moscow-1"
+  description = "S3 region: ru-moscow-1 for Cloud.ru, ru-central1 for Yandex"
+}
+
+variable "aws_access_key" {
+  type        = string
+  description = "S3 access key (Cloud.ru IAM or Yandex SA key)"
+  sensitive   = true
+}
+
+variable "aws_secret_key" {
+  type        = string
+  description = "S3 secret key"
+  sensitive   = true
+}
+
+variable "make_public" {
+  type        = bool
+  default     = false
+  description = "If true, bucket ACL public-read (password in script would be public — not recommended)"
+}
+
+provider "aws" {
+  region     = var.s3_region
+  access_key = var.aws_access_key
+  secret_key = var.aws_secret_key
+
+  # Cloud.ru / Yandex are S3-compatible but not AWS — skip validation
+  skip_credentials_validation = true
+  skip_metadata_api_check     = true
+  skip_requesting_account_id  = true
+  s3_use_path_style           = false
+  endpoints {
+    s3 = var.s3_endpoint
   }
-
-  # Lifecycle: don't keep old installer versions forever (optional)
-  # Uncomment if you want auto-expiration after install:
-  # lifecycle_rule {
-  #   enabled = true
-  #   expiration {
-  #     days = 30
-  #   }
-  # }
 }
 
-resource "yandex_iam_service_account" "storage_sa" {
-  name        = "remotegate-storage"
-  description = "RemoteGate Object Storage uploader (private bucket)"
+resource "aws_s3_bucket" "remotegate_installer" {
+  bucket = var.bucket_name
+  # Bucket is private by default; use aws_s3_bucket_acl for explicit private/public
 }
 
-resource "yandex_resourcemanager_folder_iam_member" "storage_editor" {
-  folder_id = var.yc_folder_id
-  role      = "storage.editor"
-  member    = "serviceAccount:${yandex_iam_service_account.storage_sa.id}"
+resource "aws_s3_bucket_acl" "remotegate_acl" {
+  bucket = aws_s3_bucket.remotegate_installer.id
+  acl    = var.make_public ? "public-read" : "private"
 }
 
-# Static access key for S3 API (yc iam access-key create)
-resource "yandex_iam_service_account_static_access_key" "storage_key" {
-  service_account_id = yandex_iam_service_account.storage_sa.id
-  description        = "For yc/aws s3 upload to remotreGate bucket"
+resource "aws_s3_bucket_versioning" "remotegate_versioning" {
+  bucket = aws_s3_bucket.remotegate_installer.id
+  versioning_configuration {
+    status = "Disabled"
+  }
 }
 
-output "bucket_name" { value = yandex_storage_bucket.remotegate_installer.bucket }
-output "bucket_url" { value = "https://storage.yandexcloud.net/${yandex_storage_bucket.remotegate_installer.bucket}/RemoteGate-Final.ps1" }
-output "bucket_alt_url" { value = "https://${yandex_storage_bucket.remotegate_installer.bucket}.storage.yandexcloud.net/RemoteGate-Final.ps1" }
-output "service_account_id" { value = yandex_iam_service_account.storage_sa.id }
-output "access_key" {
-  value     = yandex_iam_service_account_static_access_key.storage_key.access_key
-  sensitive = true
+output "bucket_name" {
+  value = aws_s3_bucket.remotegate_installer.bucket
 }
-output "secret_key" {
-  value     = yandex_iam_service_account_static_access_key.storage_key.secret_key
-  sensitive = true
+
+output "bucket_url" {
+  description = "Cloud.ru bucket URL (private by default)"
+  value       = var.s3_endpoint == "https://s3.cloud.ru" ? "https://${aws_s3_bucket.remotegate_installer.bucket}.s3.cloud.ru/RemoteGate-Final.ps1" : "https://storage.yandexcloud.net/${aws_s3_bucket.remotegate_installer.bucket}/RemoteGate-Final.ps1"
 }
+
+output "s3_endpoint" {
+  value = var.s3_endpoint
+}
+
 output "next_steps" {
   value = <<-EOT
-    1. Configure AWS CLI or yc with keys:
-       aws configure  (paste access_key / secret_key, region ru-central1, endpoint https://storage.yandexcloud.net)
-       Or use yc: yc config set cloud-id ${var.yc_cloud_id}; yc config set folder-id ${var.yc_folder_id}
+    1. Upload final installer:
+       aws s3 cp dist/RemoteGate-Final.ps1 s3://${aws_s3_bucket.remotegate_installer.bucket}/RemoteGate-Final.ps1 --endpoint-url ${var.s3_endpoint}
 
-    2. Upload final installer generated by wizard:
-       yc storage s3api put-object --bucket ${yandex_storage_bucket.remotegate_installer.bucket} --key RemoteGate-Final.ps1 --body dist/RemoteGate-Final.ps1
+    2. Windows install (if private, generate presigned):
+       aws s3 presign s3://${aws_s3_bucket.remotegate_installer.bucket}/RemoteGate-Final.ps1 --endpoint-url ${var.s3_endpoint} --expires-in 604800
 
-    3. Windows install command (if private, generate presigned):
-       aws s3 presign s3://${yandex_storage_bucket.remotegate_installer.bucket}/RemoteGate-Final.ps1 --endpoint-url https://storage.yandexcloud.net --expires-in 604800
-
-    4. Or upload via wizard: .\\generator\\Upload-ToYandex.ps1 -FilePath dist/RemoteGate-Final.ps1 -Bucket ${yandex_storage_bucket.remotegate_installer.bucket}
+    3. Or wizard: .\generator\Upload-ToCloud.ps1 -FilePath dist/RemoteGate-Final.ps1 -Bucket ${aws_s3_bucket.remotegate_installer.bucket} -Endpoint ${var.s3_endpoint}
   EOT
+}
+
+# Legacy outputs for Yandex compatibility (if endpoint is Yandex)
+output "service_account_id" {
+  value       = "use aws_access_key for Cloud.ru / yandex_iam_service_account for Yandex"
+  description = "Legacy: for Cloud.ru use aws keys; for Yandex see yandex_iam_service_account"
 }

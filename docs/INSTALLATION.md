@@ -1,23 +1,27 @@
 # RemoteGate — Installation Guide — Zwei Wege
 
-> **Weg A (empfohlen, deine 8 Schritte):** Wizard → festes Passwort (DEIN_PASSWORT) → Yandex Upload → Windows lädt aus Yandex (siehe `docs/GENERATOR.md`).
+> **Weg A (empfohlen, deine 8 Schritte):** Wizard → festes Passwort (DEIN_PASSWORT) → Cloud.ru (Free Tier) Upload → Windows lädt aus Cloud.ru (siehe `docs/GENERATOR.md` + `docs/CLOUDRU-VM-GUIDE.md`).
 > **Weg B (klassisch):** GitHub → Windows (key-only, manuelle config.json) — hier beschrieben.
+> **Weg C (Legacy):** Yandex Cloud statt Cloud.ru — siehe `docs/YANDEX-VM-GUIDE.md`.
 >
-> Beide Wege installieren identische Windows-Komponenten — nur die Quelle unterscheidet sich.
+> Alle Wege installieren identische Windows-Komponenten — nur die Quelle (Cloud.ru vs Yandex vs GitHub) unterscheidet sich.
 
-## Weg A — Wizard + Yandex (empfohlen)
+## Weg A — Wizard + Cloud.ru Free Tier (empfohlen)
 
-Siehe `docs/GENERATOR.md` — komplette Anleitung (Repo herunterladen → Wizard → Passwort setzen → Yandex Upload → Windows aus Yandex installieren).
+Siehe `docs/GENERATOR.md` + `docs/CLOUDRU-VM-GUIDE.md` — komplett (Repo → Wizard → Passwort → Cloud.ru Bucket → Windows aus Cloud.ru).
+
+> **Cloud.ru Free Tier:** VM 2vCPU/4GB/30GB + 15GB S3 gratis, nur Public IP ~146 ₽/Mo. Siehe [CLOUDRU-VM-GUIDE.md](CLOUDRU-VM-GUIDE.md). Yandex bleibt als Option [2] im Wizard.
 
 Kurz:
 ```powershell
 git clone https://github.com/ki10-bot/My-SSH.git; cd My-SSH
-.\generator\New-RemoteGateDeployment.ps1  # Passwort + Yandex IP/Bucket → dist/RemoteGate-Final.ps1 → auto Upload
-# Windows (aus Yandex, nicht GitHub):
-$url="https://storage.yandexcloud.net/<bucket>/RemoteGate-Final.ps1"; iwr $url -OutFile $env:TEMP\RemoteGate-Final.ps1; & $env:TEMP\RemoteGate-Final.ps1
+.\generator\New-RemoteGateDeployment.ps1  # [1] Cloud.ru wählen → Passwort + Cloud.ru IP/Bucket → dist/RemoteGate-Final.ps1 → auto Upload
+# Windows (aus Cloud.ru, nicht GitHub, privat):
+$url="https://<bucket>.s3.cloud.ru/RemoteGate-Final.ps1"; iwr $url -OutFile $env:TEMP\RemoteGate-Final.ps1; & $env:TEMP\RemoteGate-Final.ps1
+# Yandex Alternative: $url="https://storage.yandexcloud.net/<bucket>/RemoteGate-Final.ps1"
 ```
 
-Vorteil: Kein manuelles `config.json` Edit, Passwort vor-konfiguriert, Quelle Yandex (privat).
+Vorteil: Kein manuelles `config.json`, Passwort vor-konfiguriert, Quelle Cloud.ru privat (Free Tier 15 GB gratis).
 
 ## Weg B — Klassisch: Direkt aus GitHub (hier detailliert)
 
