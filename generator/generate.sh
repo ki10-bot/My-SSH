@@ -70,23 +70,21 @@ for HOST in "https://0x0.st" "https://tmpfiles.org/api/v1/upload" "https://file.
 done
 echo ""
 echo "══════════════════════════════════════"
-echo "SCHRITT 1 — Auf Windows PowerShell als ADMIN öffnen:"
-echo "  Startmenü -> \"PowerShell\" tippen -> Rechtsklick -> Als Administrator ausführen -> Ja klicken"
-echo "══════════════════════════════════════"
-echo ""
 if [[ -n "$UPLOAD_URL" ]]; then
-  echo "SCHRITT 2 — Diese EINE Zeile dort einfügen und Enter:"
+  echo "EIN BEFEHL — in normales PowerShell einfügen + Enter (fragt selbst nach Admin):"
   echo ""
-  echo "iwr $UPLOAD_URL -OutFile \$env:TEMP\\RemoteGate-Final.ps1; & \$env:TEMP\\RemoteGate-Final.ps1"
+  printf '%s\n' "powershell -ExecutionPolicy Bypass -Command \"iwr '$UPLOAD_URL' -OutFile \$env:TEMP\\RemoteGate-Final.ps1; Start-Process powershell -Verb RunAs -ArgumentList '-ExecutionPolicy Bypass -NoExit -File',\$env:TEMP+'\\RemoteGate-Final.ps1'\""
   echo ""
 else
   B64=$(base64 -w 0 "$OUTPUT_PATH" 2>/dev/null || base64 "$OUTPUT_PATH" | tr -d '\n')
-  echo "SCHRITT 2 — Diese EINE Zeile dort einfügen und Enter (offline, ohne Internet):"
+  echo "EIN BEFEHL (offline, ohne Upload):"
   echo ""
-  echo "\$b=[Convert]::FromBase64String('$B64'); [IO.File]::WriteAllBytes(\"\$env:TEMP\\RemoteGate-Final.ps1\",\$b); & \$env:TEMP\\RemoteGate-Final.ps1"
+  printf '%s\n' "powershell -ExecutionPolicy Bypass -Command \"\$b=[Convert]::FromBase64String('$B64'); [IO.File]::WriteAllBytes(\$env:TEMP+'\\RemoteGate-Final.ps1',\$b); Start-Process powershell -Verb RunAs -ArgumentList '-ExecutionPolicy Bypass -NoExit -File',\$env:TEMP+'\\RemoteGate-Final.ps1'\""
   echo ""
 fi
 echo "══════════════════════════════════════"
+echo "Einfach kopieren, in PowerShell einfügen, Enter, bei UAC auf Ja klicken."
 echo "Fenster bleibt offen und zeigt Fortschritt. Am Ende Enter drücken."
 echo ""
+echo "Manuell: Datei liegt auch lokal unter dist/RemoteGate-Final.ps1 — Doppelklick versucht ebenfalls Auto-Admin."
 echo "Prüfen: C:\\ProgramData\\RemoteGate\\logs\\install.log"

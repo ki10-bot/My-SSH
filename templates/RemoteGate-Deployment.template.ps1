@@ -1,7 +1,6 @@
 <#
 .SYNOPSIS RemoteGate — FINAL Installer (Relay ssh-j.com)
 #>
-#Requires -RunAsAdministrator
 
 $GeneratedConfig = @{
     WindowsUser     = "__WINDOWS_USER__"
@@ -39,14 +38,24 @@ function Write-InstallLog {
 }
 function Write-Step { param([string]$Text) Write-Host "`n── $Text ──" -ForegroundColor Green }
 
-# Keep window open on error
+# Keep window open on error — muss ganz oben stehen, bevor #Requires oder Admin-Checks
 trap {
     Write-Host "`nFEHLER: $_" -ForegroundColor Red
     Write-Host "Log: $LogFile" -ForegroundColor Yellow
     Write-Host "Drücke Enter zum Schließen..." -ForegroundColor Yellow
-    Read-Host | Out-Null
+    try { Read-Host | Out-Null } catch {}
     break
 }
+
+# Auto-Elevate wenn per Doppelklick / ohne Admin gestartet (Fallback)
+try {
+    $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    if (-not $isAdmin -and $PSCommandPath) {
+        Write-Host "Starte neu als Administrator (UAC)..." -ForegroundColor Yellow
+        Start-Process powershell -Verb RunAs -ArgumentList "-NoProfile -ExecutionPolicy Bypass -NoExit -File `"$PSCommandPath`""
+        exit 0
+    }
+} catch {}
 
 Write-Host @"
   RemoteGate — FINAL Installer
@@ -59,9 +68,11 @@ Write-Step "Prüfe Windows (als Admin?)"
 $os = Get-CimInstance Win32_OperatingSystem
 $build = [int]$os.BuildNumber
 if ($build -lt 17763) { Write-Host "FEHLER: Windows 10 1809+ nötig. Build: $build" -ForegroundColor Red; Read-Host "Enter zum Schließen"; exit 1 }
-if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))) {
+if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     Write-Host "FEHLER: Bitte Rechtsklick → Als Administrator ausführen" -ForegroundColor Red
     Write-Host "Ohne Admin kein OpenSSH und kein Tunnel möglich." -ForegroundColor Yellow
+    Write-Host "Tipp: Diesen EINEN Befehl in normalem PowerShell einfügen — er fragt automatisch nach Admin:" -ForegroundColor Cyan
+    Write-Host "powershell -ExecutionPolicy Bypass -Command `"iwr 'URL' -OutFile `$env:TEMP\RemoteGate-Final.ps1; Start-Process powershell -Verb RunAs -ArgumentList '-ExecutionPolicy Bypass -NoExit -File',`$env:TEMP+'\RemoteGate-Final.ps1'`"" -ForegroundColor White
     Read-Host "Enter zum Schließen"
     exit 1
 }
