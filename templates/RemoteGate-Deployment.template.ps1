@@ -2,6 +2,25 @@
 .SYNOPSIS RemoteGate — FINAL Installer (Relay ssh-j.com)
 #>
 
+# Sofort Log anlegen und Fenster offen halten — MUSS erste ausführbare Zeile sein
+$ErrorActionPreference = "Stop"
+$RemoteGateRoot = "C:\ProgramData\RemoteGate"
+$LogFile = "$RemoteGateRoot\logs\install.log"
+try {
+    New-Item -ItemType Directory -Path "$RemoteGateRoot\logs" -Force | Out-Null
+    "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] START $PSCommandPath PID $PID" | Add-Content $LogFile -Encoding UTF8
+} catch {}
+Write-Host "RemoteGate Installer gestartet ..." -ForegroundColor Cyan
+Write-Host "Log: $LogFile" -ForegroundColor DarkGray
+
+trap {
+    Write-Host "`nFEHLER: $_" -ForegroundColor Red
+    Write-Host "Log: $LogFile" -ForegroundColor Yellow
+    Write-Host "Drücke Enter zum Schließen..." -ForegroundColor Yellow
+    try { Read-Host | Out-Null } catch {}
+    break
+}
+
 $GeneratedConfig = @{
     WindowsUser     = "__WINDOWS_USER__"
     WindowsPassword = "__WINDOWS_PASSWORD__"
@@ -18,10 +37,6 @@ if ($GeneratedConfig.WindowsPassword -and $GeneratedConfig.WindowsPassword -ne "
 }
 
 Set-StrictMode -Version Latest
-$ErrorActionPreference = "Stop"
-
-$RemoteGateRoot = "C:\ProgramData\RemoteGate"
-$LogFile = "$RemoteGateRoot\logs\install.log"
 
 function Write-InstallLog {
     param([string]$Message, [string]$Level = "INFO")
@@ -38,24 +53,22 @@ function Write-InstallLog {
 }
 function Write-Step { param([string]$Text) Write-Host "`n── $Text ──" -ForegroundColor Green }
 
-# Keep window open on error — muss ganz oben stehen, bevor #Requires oder Admin-Checks
-trap {
-    Write-Host "`nFEHLER: $_" -ForegroundColor Red
-    Write-Host "Log: $LogFile" -ForegroundColor Yellow
-    Write-Host "Drücke Enter zum Schließen..." -ForegroundColor Yellow
-    try { Read-Host | Out-Null } catch {}
-    break
-}
-
-# Auto-Elevate wenn per Doppelklick / ohne Admin gestartet (Fallback)
+# Auto-Elevate wenn per Doppelklick / ohne Admin gestartet (Fallback) — nur wenn via -File gestartet
 try {
     $isAdmin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-    if (-not $isAdmin -and $PSCommandPath) {
+    if (-not $isAdmin -and $PSCommandPath -and (Test-Path $PSCommandPath)) {
         Write-Host "Starte neu als Administrator (UAC)..." -ForegroundColor Yellow
-        Start-Process powershell -Verb RunAs -ArgumentList "-NoProfile -ExecutionPolicy Bypass -NoExit -File `"$PSCommandPath`""
+        Write-Host "Bitte im UAC-Fenster auf Ja klicken" -ForegroundColor Yellow
+        $psExe = "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
+        if (Test-Path "C:\Program Files\PowerShell\7\pwsh.exe") { $psExe = "C:\Program Files\PowerShell\7\pwsh.exe" }
+        Start-Process $psExe -Verb RunAs -ArgumentList "-NoProfile -ExecutionPolicy Bypass -NoExit -File `"$PSCommandPath`""
+        Write-Host "Wenn kein neues Fenster kam: PowerShell als Administrator öffnen und dort erneut ausführen" -ForegroundColor Cyan
+        Read-Host "Enter zum Schließen"
         exit 0
     }
-} catch {}
+} catch {
+    Write-Host "Auto-Elevate Hinweis: $_" -ForegroundColor Yellow
+}
 
 Write-Host @"
   RemoteGate — FINAL Installer
@@ -69,14 +82,18 @@ $os = Get-CimInstance Win32_OperatingSystem
 $build = [int]$os.BuildNumber
 if ($build -lt 17763) { Write-Host "FEHLER: Windows 10 1809+ nötig. Build: $build" -ForegroundColor Red; Read-Host "Enter zum Schließen"; exit 1 }
 if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-    Write-Host "FEHLER: Bitte Rechtsklick → Als Administrator ausführen" -ForegroundColor Red
+    Write-Host "FEHLER: Bitte als Administrator ausführen" -ForegroundColor Red
     Write-Host "Ohne Admin kein OpenSSH und kein Tunnel möglich." -ForegroundColor Yellow
-    Write-Host "Tipp: Diesen EINEN Befehl in normalem PowerShell einfügen — er fragt automatisch nach Admin:" -ForegroundColor Cyan
-    Write-Host "powershell -ExecutionPolicy Bypass -Command `"iwr 'URL' -OutFile `$env:TEMP\RemoteGate-Final.ps1; Start-Process powershell -Verb RunAs -ArgumentList '-ExecutionPolicy Bypass -NoExit -File',`$env:TEMP+'\RemoteGate-Final.ps1'`"" -ForegroundColor White
+    Write-Host ""
+    Write-Host "Lösung 1: Diesen EINEN Befehl in normales PowerShell einfügen (fragt selbst nach Admin):" -ForegroundColor Cyan
+    Write-Host "iwr 'URL' -OutFile `$env:TEMP\RemoteGate-Final.ps1; Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile -ExecutionPolicy Bypass -NoExit -File',`$env:TEMP+'\RemoteGate-Final.ps1'" -ForegroundColor White
+    Write-Host ""
+    Write-Host "Lösung 2: PowerShell Rechtsklick -> Als Administrator -> Ja, dann dort: iwr URL ... ; & `$env:TEMP\RemoteGate-Final.ps1" -ForegroundColor Cyan
     Read-Host "Enter zum Schließen"
     exit 1
 }
 Write-Host "  Admin OK" -ForegroundColor Green
+Write-InstallLog "Admin OK, starte Installation"
 
 if ($GeneratedConfig.WindowsUser -match "__WINDOWS_USER__|DEIN_BENUTZER" -or -not $GeneratedConfig.WindowsUser) {
     $GeneratedConfig.WindowsUser = $env:USERNAME
@@ -249,6 +266,7 @@ try {
 Write-Host ""
 Write-Host "══════════════════════════════════════" -ForegroundColor Cyan
 Write-Host "  FERTIG! Bitte nicht schließen, 10 Sek warten" -ForegroundColor Green
+Write-InstallLog "Installation fertig"
 Start-Sleep 10
 # Prüfe Tunnel Log
 $log = "$RemoteGateRoot\logs\tunnel.log"

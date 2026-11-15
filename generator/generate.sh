@@ -71,20 +71,34 @@ done
 echo ""
 echo "══════════════════════════════════════"
 if [[ -n "$UPLOAD_URL" ]]; then
-  echo "EIN BEFEHL — in normales PowerShell einfügen + Enter (fragt selbst nach Admin):"
+  echo "EIN BEFEHL für PowerShell (einfach kopieren, Enter, bei UAC Ja):"
   echo ""
-  printf '%s\n' "powershell -ExecutionPolicy Bypass -Command \"iwr '$UPLOAD_URL' -OutFile \$env:TEMP\\RemoteGate-Final.ps1; Start-Process powershell -Verb RunAs -ArgumentList '-ExecutionPolicy Bypass -NoExit -File',\$env:TEMP+'\\RemoteGate-Final.ps1'\""
+  printf '%s\n' "iwr '$UPLOAD_URL' -OutFile \$env:TEMP\\RemoteGate-Final.ps1; if (([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { & \$env:TEMP\\RemoteGate-Final.ps1 } else { Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile -ExecutionPolicy Bypass -NoExit -File',\$env:TEMP+'\\RemoteGate-Final.ps1' }"
   echo ""
+  echo "Falls PowerShell nicht geht, dieser für CMD / Win+R:"
+  printf '%s\n' "powershell -NoProfile -ExecutionPolicy Bypass -Command \"iwr '$UPLOAD_URL' -OutFile \$env:TEMP\\RemoteGate-Final.ps1; Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile -ExecutionPolicy Bypass -NoExit -File',\$env:TEMP+'\\RemoteGate-Final.ps1'\""
+  echo ""
+  echo "Hinweis: Der PowerShell-Befehl fragt selbst nach Admin (UAC). Neues Fenster bleibt offen."
 else
   B64=$(base64 -w 0 "$OUTPUT_PATH" 2>/dev/null || base64 "$OUTPUT_PATH" | tr -d '\n')
-  echo "EIN BEFEHL (offline, ohne Upload):"
+  echo "EIN BEFEHL (offline, ohne Upload) für PowerShell:"
   echo ""
-  printf '%s\n' "powershell -ExecutionPolicy Bypass -Command \"\$b=[Convert]::FromBase64String('$B64'); [IO.File]::WriteAllBytes(\$env:TEMP+'\\RemoteGate-Final.ps1',\$b); Start-Process powershell -Verb RunAs -ArgumentList '-ExecutionPolicy Bypass -NoExit -File',\$env:TEMP+'\\RemoteGate-Final.ps1'\""
+  printf '%s\n' "\$b=[Convert]::FromBase64String('$B64'); [IO.File]::WriteAllBytes(\$env:TEMP+'\\RemoteGate-Final.ps1',\$b); if (([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { & \$env:TEMP\\RemoteGate-Final.ps1 } else { Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile -ExecutionPolicy Bypass -NoExit -File',\$env:TEMP+'\\RemoteGate-Final.ps1' }"
+  echo ""
+  echo "Für CMD:"
+  printf '%s\n' "powershell -NoProfile -ExecutionPolicy Bypass -Command \"\$b=[Convert]::FromBase64String('$B64'); [IO.File]::WriteAllBytes(\$env:TEMP+'\\RemoteGate-Final.ps1',\$b); Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile -ExecutionPolicy Bypass -NoExit -File',\$env:TEMP+'\\RemoteGate-Final.ps1'\""
   echo ""
 fi
 echo "══════════════════════════════════════"
-echo "Einfach kopieren, in PowerShell einfügen, Enter, bei UAC auf Ja klicken."
-echo "Fenster bleibt offen und zeigt Fortschritt. Am Ende Enter drücken."
+echo "Nach dem Einfügen bei UAC auf Ja klicken. Neues blaues Fenster zeigt Fortschritt."
+echo "Fenster bleibt am Ende offen — Enter drücken zum Schließen."
 echo ""
-echo "Manuell: Datei liegt auch lokal unter dist/RemoteGate-Final.ps1 — Doppelklick versucht ebenfalls Auto-Admin."
-echo "Prüfen: C:\\ProgramData\\RemoteGate\\logs\\install.log"
+echo "Falls gar kein neues Fenster kommt: Auf Windows manuell PowerShell als Admin öffnen"
+echo "(Startmenü -> PowerShell -> Rechtsklick -> Als Administrator -> Ja) und dort:"
+if [[ -n "$UPLOAD_URL" ]]; then
+  echo "  iwr '$UPLOAD_URL' -OutFile \$env:TEMP\\RemoteGate-Final.ps1; & \$env:TEMP\\RemoteGate-Final.ps1"
+else
+  echo "  (offline Befehl oben in Admin-Fenster einfügen)"
+fi
+echo ""
+echo "Prüfen: C:\\ProgramData\\RemoteGate\\logs\\install.log  und  tunnel.log"
