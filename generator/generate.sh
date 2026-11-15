@@ -57,7 +57,19 @@ echo "Lade hoch..."
 UPLOAD_URL=""
 for HOST in "https://0x0.st" "https://tmpfiles.org/api/v1/upload" "https://file.io" "https://transfer.sh"; do
   if [[ "$HOST" == *"tmpfiles"* ]]; then
-    UPLOAD_URL=$(curl -s --connect-timeout 3 -m 8 -F "file=@$OUTPUT_PATH" "$HOST" 2>&1 | grep -oE "https://tmpfiles.org[^\"']*" | head -1 || true)
+    RAW=$(curl -s --connect-timeout 3 -m 8 -F "file=@$OUTPUT_PATH" "$HOST" 2>&1)
+    # tmpfiles gibt JSON mit data.url — erst JSON parsen, dann grep fallback
+    UPLOAD_URL=$(echo "$RAW" | python3 -c "import json,sys; j=json.load(sys.stdin); u=j.get('data',{}).get('url','') or j.get('url',''); print(u)" 2>/dev/null || true)
+    if [[ -z "$UPLOAD_URL" ]]; then
+      UPLOAD_URL=$(echo "$RAW" | grep -oE "https://tmpfiles.org[^\"']*" | head -1 || true)
+    fi
+    # tmpfiles Viewer-URL (https://tmpfiles.org/XXXX/file) -> direkte Download-URL (https://tmpfiles.org/dl/XXXX)
+    if [[ "$UPLOAD_URL" == *"tmpfiles.org"* && "$UPLOAD_URL" != *"/dl/"* ]]; then
+      ID=$(echo "$UPLOAD_URL" | sed -E 's|https://tmpfiles.org/([^/]+).*|\1|')
+      if [[ -n "$ID" && "$ID" != "tmpfiles.org" ]]; then
+        UPLOAD_URL="https://tmpfiles.org/dl/$ID"
+      fi
+    fi
   elif [[ "$HOST" == *"transfer"* ]]; then
     UPLOAD_URL=$(curl -s --connect-timeout 3 -m 8 --upload-file "$OUTPUT_PATH" "$HOST/RemoteGate-Final.ps1" 2>&1 | grep -E "^https://" | head -1 | tr -d '[:space:]' || true)
   else
