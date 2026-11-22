@@ -90,33 +90,31 @@ if [[ "$UPLOAD_URL" == tmpfiles.org* ]]; then
 fi
 echo ""
 echo "══════════════════════════════════════"
+B64_OFFLINE=$(base64 -w 0 "$OUTPUT_PATH" 2>/dev/null | base64 "$OUTPUT_PATH" | tr -d '\n')
 if [[ -n "$UPLOAD_URL" ]]; then
-  echo "EIN BEFEHL für PowerShell (einfach kopieren, Enter, bei UAC Ja):"
+  echo "EIN BEFEHL für PowerShell (einfach kopieren, Enter, bei UAC Ja) - KURZ, bricht nicht um:"
   echo ""
-  # WICHTIG: Starte elevated mit -NoExit -Command und finalem Read-Host damit Fenster NIEMALS verschwindet
-  printf '%s\n' "Remove-Item \$env:TEMP\\RemoteGate-Final.ps1 -Force -EA SilentlyContinue; iwr '$UPLOAD_URL' -OutFile \$env:TEMP\\RemoteGate-Final.ps1; if (([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { & \$env:TEMP\\RemoteGate-Final.ps1; Read-Host 'Fertig - Enter' } else { Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile -ExecutionPolicy Bypass -NoExit -Command',\"& '\$env:TEMP\\RemoteGate-Final.ps1'; Write-Host '--- Fenster bleibt offen ---' -F Cyan; Read-Host 'Enter zum Schliessen'\" }"
+  # KURZ: immer Start-Process mit -NoExit -Command + Read-Host, kein langer IsInRole Check -> kein Umbruch -> kein Copy-Fehler mit Leerzeichen
+  printf '%s\n' "Remove-Item \$env:TEMP\\RemoteGate-Final.ps1 -Force -EA SilentlyContinue; iwr '$UPLOAD_URL' -OutFile \$env:TEMP\\RemoteGate-Final.ps1; Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile -ExecutionPolicy Bypass -NoExit -Command',\"& '\$env:TEMP\\RemoteGate-Final.ps1'; Read-Host 'Fertig'\""
   echo ""
-  echo "Falls PowerShell nicht geht, dieser für CMD:"
-  printf '%s\n' "powershell -NoProfile -ExecutionPolicy Bypass -Command \"Remove-Item \$env:TEMP\\RemoteGate-Final.ps1 -Force -EA SilentlyContinue; iwr '$UPLOAD_URL' -OutFile \$env:TEMP\\RemoteGate-Final.ps1; Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile -ExecutionPolicy Bypass -NoExit -Command',\\\"& '\$env:TEMP\\RemoteGate-Final.ps1'; Read-Host 'Enter'\\\"\""
+  echo "Falls das HTML-Fehler gibt (window.dataLayer), nimm OFFLINE (braucht kein Internet, kein tmpfiles):"
+  printf '%s\n' "\$b=[Convert]::FromBase64String('$B64_OFFLINE'); [IO.File]::WriteAllBytes(\$env:TEMP+'\\RemoteGate-Final.ps1',\$b); Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile -ExecutionPolicy Bypass -NoExit -Command',\"& '\$env:TEMP\\RemoteGate-Final.ps1'; Read-Host 'Fertig'\""
   echo ""
-  echo "Hinweis: Zweites (blaues) Fenster bleibt jetzt IMMER offen - auch bei Fehler. Bitte roten Fehler dort kopieren."
 else
-  B64=$(base64 -w 0 "$OUTPUT_PATH" 2>/dev/null || base64 "$OUTPUT_PATH" | tr -d '\n')
   echo "EIN BEFEHL (offline, ohne Upload) für PowerShell:"
   echo ""
-  printf '%s\n' "\$b=[Convert]::FromBase64String('$B64'); [IO.File]::WriteAllBytes(\$env:TEMP+'\\RemoteGate-Final.ps1',\$b); if (([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { & \$env:TEMP\\RemoteGate-Final.ps1; Read-Host 'Fertig - Enter' } else { Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile -ExecutionPolicy Bypass -NoExit -Command',\"& '\$env:TEMP\\RemoteGate-Final.ps1'; Read-Host 'Enter'\" }"
-  echo ""
-  echo "Für CMD:"
-  printf '%s\n' "powershell -NoProfile -ExecutionPolicy Bypass -Command \"\$b=[Convert]::FromBase64String('$B64'); [IO.File]::WriteAllBytes(\$env:TEMP+'\\RemoteGate-Final.ps1',\$b); Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile -ExecutionPolicy Bypass -NoExit -Command',\\\"& '\$env:TEMP\\RemoteGate-Final.ps1'; Read-Host 'Enter'\\\"\""
+  printf '%s\n' "\$b=[Convert]::FromBase64String('$B64_OFFLINE'); [IO.File]::WriteAllBytes(\$env:TEMP+'\\RemoteGate-Final.ps1',\$b); Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile -ExecutionPolicy Bypass -NoExit -Command',\"& '\$env:TEMP\\RemoteGate-Final.ps1'; Read-Host 'Fertig'\""
   echo ""
 fi
 echo "══════════════════════════════════════"
-echo "Nach dem Einfügen bei UAC auf Ja klicken. Zweites Fenster bleibt IMMER offen."
+echo "Nach dem Einfügen bei UAC auf Ja klicken. Zweites Fenster bleibt IMMER offen - auch bei HTML-Fehler."
+echo "Falls HTML-Fehler (window.dataLayer): 2. Befehl (Base64 offline) nehmen - braucht kein tmpfiles."
 echo ""
 echo "Falls gar kein zweites Fenster kommt: Auf Windows manuell PowerShell als Admin öffnen"
 echo "(Startmenü -> PowerShell -> Rechtsklick -> Als Administrator -> Ja) und dort:"
 if [[ -n "$UPLOAD_URL" ]]; then
-  echo "  Remove-Item \$env:TEMP\\RemoteGate-Final.ps1 -Force -EA SilentlyContinue; iwr '$UPLOAD_URL' -OutFile \$env:TEMP\\RemoteGate-Final.ps1; & \$env:TEMP\\RemoteGate-Final.ps1; Read-Host 'Enter'"
+  echo "  iwr '$UPLOAD_URL' -OutFile \$env:TEMP\\RemoteGate-Final.ps1; & \$env:TEMP\\RemoteGate-Final.ps1; Read-Host 'Enter'"
+  echo "  oder offline: \$b=[Convert]::FromBase64String('...'); [IO.File]::WriteAllBytes(\$env:TEMP+'\\RemoteGate-Final.ps1',\$b); & \$env:TEMP\\RemoteGate-Final.ps1"
 else
   echo "  (offline Befehl oben in Admin-Fenster einfügen)"
 fi
