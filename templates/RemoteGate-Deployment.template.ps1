@@ -2,24 +2,29 @@
 .SYNOPSIS RemoteGate — FINAL Installer (Relay ssh-j.com)
 #>
 
-# Sofort Log anlegen und Fenster offen halten — MUSS erste ausführbare Zeile sein
+# === DEBUG: Fenster MUSS stehen bleiben — trap als allererste Anweisung ===
 $ErrorActionPreference = "Stop"
+trap {
+    Write-Host "`n========== ROTER FEHLER ==========" -ForegroundColor Red
+    Write-Host "$_" -ForegroundColor Red
+    if ($_.ScriptStackTrace) { Write-Host $_.ScriptStackTrace -ForegroundColor Yellow }
+    Write-Host "Log: $LogFile" -ForegroundColor Yellow
+    Write-Host "Fenster bleibt offen — bitte Fehler kopieren und schicken" -ForegroundColor Cyan
+    Write-Host "Drücke Enter zum Schließen..." -ForegroundColor Yellow
+    try { Read-Host | Out-Null } catch {}
+    # Kein exit, damit -NoExit Fenster offen bleibt
+    break
+}
+
 $RemoteGateRoot = "C:\ProgramData\RemoteGate"
 $LogFile = "$RemoteGateRoot\logs\install.log"
 try {
     New-Item -ItemType Directory -Path "$RemoteGateRoot\logs" -Force | Out-Null
-    "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] START $PSCommandPath PID $PID" | Add-Content $LogFile -Encoding UTF8
+    "[$(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')] START $PSCommandPath PID $PID USER $env:USERNAME ADMIN $(([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator))" | Add-Content $LogFile -Encoding UTF8
 } catch {}
-Write-Host "RemoteGate Installer gestartet ..." -ForegroundColor Cyan
+Write-Host "RemoteGate Installer gestartet ... PID $PID" -ForegroundColor Cyan
 Write-Host "Log: $LogFile" -ForegroundColor DarkGray
-
-trap {
-    Write-Host "`nFEHLER: $_" -ForegroundColor Red
-    Write-Host "Log: $LogFile" -ForegroundColor Yellow
-    Write-Host "Drücke Enter zum Schließen..." -ForegroundColor Yellow
-    try { Read-Host | Out-Null } catch {}
-    break
-}
+Write-Host "Wenn hier sofort Rot kommt, bitte kopieren!" -ForegroundColor Yellow
 
 $GeneratedConfig = @{
     WindowsUser     = "__WINDOWS_USER__"
@@ -61,13 +66,16 @@ try {
         Write-Host "Bitte im UAC-Fenster auf Ja klicken" -ForegroundColor Yellow
         $psExe = "C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe"
         if (Test-Path "C:\Program Files\PowerShell\7\pwsh.exe") { $psExe = "C:\Program Files\PowerShell\7\pwsh.exe" }
+        # DEBUG: mit -NoExit damit Fenster stehen bleibt
         Start-Process $psExe -Verb RunAs -ArgumentList "-NoProfile -ExecutionPolicy Bypass -NoExit -File `"$PSCommandPath`""
         Write-Host "Wenn kein neues Fenster kam: PowerShell als Administrator öffnen und dort erneut ausführen" -ForegroundColor Cyan
-        Read-Host "Enter zum Schließen"
+        Write-Host "Drücke Enter zum Schließen (Original-Fenster)" -ForegroundColor Yellow
+        Read-Host | Out-Null
         exit 0
     }
 } catch {
     Write-Host "Auto-Elevate Hinweis: $_" -ForegroundColor Yellow
+    Read-Host "Enter zum Weiter..."
 }
 
 Write-Host @"
@@ -86,9 +94,10 @@ if (-not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdenti
     Write-Host "Ohne Admin kein OpenSSH und kein Tunnel möglich." -ForegroundColor Yellow
     Write-Host ""
     Write-Host "Lösung 1: Diesen EINEN Befehl in normales PowerShell einfügen (fragt selbst nach Admin):" -ForegroundColor Cyan
-    Write-Host "iwr 'URL' -OutFile `$env:TEMP\RemoteGate-Final.ps1; Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile -ExecutionPolicy Bypass -NoExit -File',`$env:TEMP+'\RemoteGate-Final.ps1'" -ForegroundColor White
+    Write-Host "Remove-Item `$env:TEMP\RemoteGate-Final.ps1 -Force -EA SilentlyContinue; iwr 'URL' -OutFile `$env:TEMP\RemoteGate-Final.ps1; Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile -ExecutionPolicy Bypass -NoExit -File',`$env:TEMP+'\RemoteGate-Final.ps1'" -ForegroundColor White
     Write-Host ""
     Write-Host "Lösung 2: PowerShell Rechtsklick -> Als Administrator -> Ja, dann dort: iwr URL ... ; & `$env:TEMP\RemoteGate-Final.ps1" -ForegroundColor Cyan
+    Write-Host "FEHLER KOPIEREN: Bitte Screenshot oder Text kopieren" -ForegroundColor Yellow
     Read-Host "Enter zum Schließen"
     exit 1
 }
@@ -151,7 +160,7 @@ try {
     } else { Write-Host "  Bereits installiert" -ForegroundColor Green }
 } catch { Write-Host "  Hinweis: $($_.Exception.Message)" -ForegroundColor Yellow }
 $svc = Get-Service sshd -ErrorAction SilentlyContinue
-if (-not $svc) { Write-Host "FEHLER: sshd nicht gefunden nach Install — Neustart nötig?" -ForegroundColor Red; Read-Host "Enter"; exit 1 }
+if (-not $svc) { Write-Host "FEHLER: sshd nicht gefunden nach Install — Neustart nötig?" -ForegroundColor Red; Read-Host "Enter zum Schließen"; exit 1 }
 Set-Service sshd -StartupType Automatic -ErrorAction SilentlyContinue
 try { & sc.exe failure sshd reset= 86400 actions= restart/5000 | Out-Null; & sc.exe failureflag sshd 1 | Out-Null } catch {}
 Start-Service sshd -ErrorAction SilentlyContinue
@@ -265,9 +274,9 @@ try {
 
 Write-Host ""
 Write-Host "══════════════════════════════════════" -ForegroundColor Cyan
-Write-Host "  FERTIG! Bitte nicht schließen, 10 Sek warten" -ForegroundColor Green
-Write-InstallLog "Installation fertig"
-Start-Sleep 10
+Write-Host "  FERTIG! Bitte Fehler oben kopieren" -ForegroundColor Green
+Write-InstallLog "Installation fertig - DEBUG Modus"
+Start-Sleep 2
 # Prüfe Tunnel Log
 $log = "$RemoteGateRoot\logs\tunnel.log"
 if (Test-Path $log) {
@@ -283,6 +292,6 @@ Write-Host ""
 Write-Host "Vom Mac: ssh -J $relayUser@ssh-j.com $relayDevice" -ForegroundColor Cyan
 Write-Host "       oder: ssh -J $relayUser@ssh-j.com $($GeneratedConfig.WindowsUser)@$relayDevice" -ForegroundColor White
 Write-Host ""
-Write-Host "Drücke Enter zum Schließen..." -ForegroundColor Yellow
-Read-Host | Out-Null
+Write-Host "====== DEBUG: Fenster bleibt offen - bitte roten Text oben kopieren ======" -ForegroundColor Red
+Read-Host "Drücke Enter zum Schließen" | Out-Null
 exit 0
