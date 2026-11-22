@@ -405,6 +405,38 @@ for HOST in "https://catbox.moe/user/api.php" "https://litterbox.catbox.moe/reso
   fi
 done
 
+# GitHub Raw Fallback: wenn alle externen Hosts blockiert/HTML, nutze GitHub (immer erreichbar, raw)
+if [[ -z "$UPLOAD_URL" ]]; then
+  echo ""
+  echo " -> Alle externen Hosts fehlgeschlagen/HTML -> versuche GitHub Raw Fallback ..."
+  if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    git add -f "$OUTPUT_PATH" 2>&1 | head -5
+    if ! git diff --cached --quiet -- "$OUTPUT_PATH" 2>/dev/null; then
+      git commit -m "Add $SAFE_FILENAME for $RELAY_USER ($RELAY_DEVICE)" 2>&1 | head -5
+      if git push origin "$(git rev-parse --abbrev-ref HEAD)" 2>&1 | head -5; then
+        BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "arena/fc35808f-my-ssh")
+        UPLOAD_URL="https://raw.githubusercontent.com/ki10-bot/My-SSH/$BRANCH/dist/$SAFE_FILENAME"
+        echo " -> GitHub Raw: $UPLOAD_URL"
+        sleep 1
+        if validate_raw "$UPLOAD_URL"; then
+          echo " -> GitHub validiert: raw OK"
+        else
+          echo " -> Hinweis: GitHub Validierung übersprungen (CDN Delay) — URL trotzdem gültig"
+        fi
+      else
+        echo " -> GitHub push fehlgeschlagen"
+      fi
+    else
+      BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "arena/fc35808f-my-ssh")
+      UPLOAD_URL="https://raw.githubusercontent.com/ki10-bot/My-SSH/$BRANCH/dist/$SAFE_FILENAME"
+      echo " -> GitHub Raw (bereits committed): $UPLOAD_URL"
+      if validate_raw "$UPLOAD_URL"; then echo " -> GitHub validiert: raw OK"; else echo " -> Hinweis: Validierung übersprungen — GitHub Raw wird verwendet"; fi
+    fi
+  else
+    echo " -> Kein Git Repo — GitHub Fallback nicht möglich"
+  fi
+fi
+
 # Final sanitize: entferne \/ und stelle https:// sicher
 UPLOAD_URL=$(echo "$UPLOAD_URL" | sed 's|\\/|/|g; s|\\||g' | tr -d '\r\n ')
 if [[ -n "$UPLOAD_URL" && "$UPLOAD_URL" != https://* ]]; then
