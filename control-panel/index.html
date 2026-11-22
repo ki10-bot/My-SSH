@@ -13,12 +13,18 @@
   .titlebar .btns div{width:46px;height:24px;display:flex;align-items:center;justify-content:center;cursor:pointer}
   .titlebar .btns div:hover{background:#505050}
   .titlebar .btns .close:hover{background:#e81123}
-  #terminal{flex:1;background:#0c0c0c;padding:12px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;line-height:1.4}
+  #profileBar{background:#252526;color:#ccc;padding:8px 12px;display:flex;align-items:center;gap:10px;font-size:12px;border-bottom:1px solid #333}
+  #profileBar select{background:#3c3c3c;color:#fff;border:1px solid #555;padding:4px 8px;font-family:inherit;font-size:12px;min-width:220px}
+  #profileBar .info{color:#858585;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  #profileBar button{background:#007acc;color:#fff;border:none;padding:4px 10px;cursor:pointer;font-family:inherit}
+  #profileBar button:hover{background:#0e639c}
+  #terminal{flex:1;background:#0c0c0c;padding:12px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;line-height:1.4;font-size:13px}
   .line{margin:2px 0}
   .prompt{color:#cccccc}
   .cmd{color:#f9f1a5}
   .output{color:#cccccc}
   .error{color:#f1707b}
+  .sys{color:#858585}
   #inputRow{display:flex;align-items:center;padding:8px 12px;background:#0c0c0c;border-top:1px solid #333}
   #prompt{color:#cccccc;margin-right:6px;white-space:nowrap}
   #cmdInput{flex:1;background:transparent;border:none;color:#f9f1a5;font-family:inherit;font-size:14px;outline:none;caret-color:#fff}
@@ -31,67 +37,122 @@
   <span>Eingabeaufforderung — RemoteGate Control Panel</span>
   <div class="btns"><div>—</div><div>□</div><div class="close">✕</div></div>
 </div>
+<div id="profileBar">
+  <label>Profil:</label>
+  <select id="profileSelect"></select>
+  <span class="info" id="profileInfo"></span>
+  <button id="refreshBtn">↻</button>
+</div>
 <div id="terminal"></div>
 <div id="inputRow">
   <span id="prompt">C:\Windows\System32&gt;</span>
   <input id="cmdInput" autocomplete="off" spellcheck="false" autofocus>
 </div>
-<div id="status">Verbunden via ssh-j.com — Befehle werden auf Windows mit Admin-Rechten ausgeführt (cmd /c)</div>
+<div id="status">Lade Profile...</div>
 <script>
 const term = document.getElementById('terminal');
 const input = document.getElementById('cmdInput');
 const promptEl = document.getElementById('prompt');
-let history = [];
-let histIdx = -1;
+const profileSelect = document.getElementById('profileSelect');
+const profileInfo = document.getElementById('profileInfo');
+const statusEl = document.getElementById('status');
+let history=[], histIdx=-1;
+let profiles=[], activeDeviceId=null;
 
 function addLine(text, cls){
-  const d = document.createElement('div');
-  d.className = 'line ' + (cls||'output');
-  d.textContent = text;
+  const d=document.createElement('div');
+  d.className='line '+(cls||'output');
+  d.textContent=text;
   term.appendChild(d);
-  term.scrollTop = term.scrollHeight;
+  term.scrollTop=term.scrollHeight;
 }
 function addPromptCmd(cmd){
-  const d = document.createElement('div');
-  d.className = 'line';
-  const p = document.createElement('span'); p.className='prompt'; p.textContent = promptEl.textContent + ' ';
-  const c = document.createElement('span'); c.className='cmd'; c.textContent = cmd;
+  const d=document.createElement('div'); d.className='line';
+  const p=document.createElement('span'); p.className='prompt'; p.textContent=promptEl.textContent+' ';
+  const c=document.createElement('span'); c.className='cmd'; c.textContent=cmd;
   d.append(p,c); term.appendChild(d);
 }
 
-addLine('Microsoft Windows [Version 10.0.19045]');
-addLine('(c) Microsoft Corporation. Alle Rechte vorbehalten.');
-addLine('');
-addLine('Tip: Alle Befehle laufen auf dem Windows-PC als Administrator (cmd /c).');
-addLine('Beispiel: dir, ipconfig, whoami, tasklist');
-addLine('');
+async function loadProfiles(){
+  try{
+    const res=await fetch('/config');
+    const cfg=await res.json();
+    profiles=cfg.profiles||[];
+    activeDeviceId=cfg.activeDeviceId|| (profiles[0]&&profiles[0].deviceId);
+    renderProfiles();
+    if(profiles.length){
+      addLine('Microsoft Windows [Version 10.0.19045]', 'sys');
+      addLine('(c) Microsoft Corporation. Alle Rechte vorbehalten.', 'sys');
+      addLine('', 'sys');
+      addLine(`Bereit — ${profiles.length} Profil(e)`, 'sys');
+      profiles.forEach((p,i)=>{
+        const activeMark = p.deviceId===activeDeviceId ? ' → AKTIV' : '';
+        addLine(` ${i+1}. ${p.relayUser}@${p.relayHost} device ${p.relayDevice}  Datei ${p.filename}  id ${p.deviceId.slice(0,8)}${activeMark}`, 'sys');
+      });
+      addLine('', 'sys');
+      addLine('Tipp: Profil oben wählen, dann Befehle wie dir, ipconfig, whoami, tasklist eingeben.', 'sys');
+      addLine('Befehle laufen auf Windows als Administrator (cmd /c).', 'sys');
+      addLine('', 'sys');
+    } else {
+      addLine('Kein Profil gefunden — bitte zuerst gen.command ausführen (Passwort, Name).', 'error');
+    }
+  }catch(e){
+    addLine('Fehler beim Laden der Profile: '+e.message, 'error');
+  }
+}
+function renderProfiles(){
+  profileSelect.innerHTML='';
+  profiles.forEach(p=>{
+    const opt=document.createElement('option');
+    opt.value=p.deviceId;
+    opt.textContent=`${p.relayUser} → ${p.relayDevice} (${p.filename})`;
+    if(p.deviceId===activeDeviceId) opt.selected=true;
+    profileSelect.appendChild(opt);
+  });
+  const active=profiles.find(p=>p.deviceId===activeDeviceId);
+  if(active){
+    profileInfo.textContent=`${active.relayUser}@${active.relayHost} device ${active.relayDevice} — ntfy.sh/${active.ntfyTopic} — ${active.created}`;
+    promptEl.textContent=`C:\\Users\\${active.relayUser}>`;
+    statusEl.textContent=`Verbunden via ${active.relayHost} als ${active.relayUser} → ${active.relayDevice} — ${profiles.length} Profil(e)`;
+  } else {
+    profileInfo.textContent='Kein Profil aktiv';
+    statusEl.textContent='Kein Profil';
+  }
+}
+profileSelect.addEventListener('change', async()=>{
+  activeDeviceId=profileSelect.value;
+  renderProfiles();
+  try{
+    await fetch('/select',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({deviceId:activeDeviceId})});
+    addLine(`→ Profil gewechselt: ${profiles.find(p=>p.deviceId===activeDeviceId).relayDevice}`, 'sys');
+  }catch(e){ addLine('Wechsel fehlgeschlagen: '+e.message,'error'); }
+});
+document.getElementById('refreshBtn').addEventListener('click', ()=>{ term.innerHTML=''; loadProfiles(); });
 
 input.addEventListener('keydown', async (e)=>{
-  if(e.key === 'Enter'){
-    const cmd = input.value.trim();
-    if(!cmd) return;
-    history.push(cmd); histIdx = history.length;
-    addPromptCmd(cmd);
-    input.value = '';
-    addLine('⏳ ausführen...', 'output');
+  if(e.key==='Enter'){
+    const cmd=input.value.trim(); if(!cmd) return;
+    history.push(cmd); histIdx=history.length;
+    addPromptCmd(cmd); input.value='';
+    const loading=document.createElement('div'); loading.className='line sys'; loading.textContent='⏳ ausführen...'; term.appendChild(loading); term.scrollTop=term.scrollHeight;
     try{
-      const res = await fetch('/exec', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({cmd})});
-      const j = await res.json();
-      term.lastChild.remove();
-      addLine(j.output || '(kein Output)', j.returncode ? 'error' : 'output');
+      const res=await fetch('/exec',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cmd, deviceId:activeDeviceId})});
+      const j=await res.json();
+      loading.remove();
+      addLine(j.output||'(kein Output)', j.returncode ? 'error' : 'output');
     }catch(err){
-      term.lastChild.remove();
-      addLine('Fehler: ' + err.message + ' — läuft Windows und Tunnel?', 'error');
+      loading.remove();
+      addLine('Fehler: '+err.message+' — läuft Windows & Tunnel?', 'error');
     }
-  } else if(e.key === 'ArrowUp'){
-    if(history.length && histIdx>0){ histIdx--; input.value = history[histIdx]; }
-    e.preventDefault();
-  } else if(e.key === 'ArrowDown'){
-    if(histIdx < history.length-1){ histIdx++; input.value = history[histIdx]; } else { input.value=''; histIdx=history.length; }
+  } else if(e.key==='ArrowUp'){
+    if(history.length && histIdx>0){ histIdx--; input.value=history[histIdx]; } e.preventDefault();
+  } else if(e.key==='ArrowDown'){
+    if(histIdx < history.length-1){ histIdx++; input.value=history[histIdx]; } else { input.value=''; histIdx=history.length; }
   }
 });
 input.focus();
 document.addEventListener('click', ()=> input.focus());
+loadProfiles();
 </script>
 </body>
 </html>

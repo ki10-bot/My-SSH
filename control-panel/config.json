@@ -1,7 +1,16 @@
 {
-  "relayUser": "testuser",
   "relayHost": "ssh-j.com",
-  "relayDevice": "winpc",
-  "windowsUser": "DEIN_BENUTZER",
-  "deviceId": "2af8c064-ade5-40be-993e-05e95d2def1b"
+  "profiles": [
+    {
+      "relayUser": "ki10sus",
+      "relayHost": "ssh-j.com",
+      "relayDevice": "winpc",
+      "deviceId": "e0bcff55-76b2-4986-9bda-14d0c67a3b64",
+      "windowsUser": "DEIN_BENUTZER",
+      "filename": "RemoteGate-ki10sus.ps1",
+      "ntfyTopic": "ki10sus",
+      "created": "2026-11-22 19:41:42"
+    }
+  ],
+  "activeDeviceId": "e0bcff55-76b2-4986-9bda-14d0c67a3b64"
 }
