@@ -55,7 +55,7 @@ PYEOF
 echo ""
 echo "Lade hoch..."
 UPLOAD_URL=""
-for HOST in "https://file.io" "https://transfer.sh" "https://0x0.st" "https://tmpfiles.org/api/v1/upload"; do
+for HOST in "https://transfer.sh" "https://file.io" "https://0x0.st" "https://tmpfiles.org/api/v1/upload"; do
   if [[ "$HOST" == *"tmpfiles"* ]]; then
     RAW=$(curl -s --connect-timeout 3 -m 8 -F "file=@$OUTPUT_PATH" "$HOST" 2>&1 || true)
     UPLOAD_URL=$(echo "$RAW" | python3 -c "import json,sys; j=json.load(sys.stdin); u=j.get('data',{}).get('url','') or j.get('url',''); print(u)" 2>/dev/null || true)
@@ -77,8 +77,17 @@ for HOST in "https://file.io" "https://transfer.sh" "https://0x0.st" "https://tm
   fi
   [[ -n "$UPLOAD_URL" ]] && break
 done
-# Final sanitize: entferne \/ und markdown Artefakte
+# Final sanitize: entferne \/ und stelle https:// sicher
 UPLOAD_URL=$(echo "$UPLOAD_URL" | sed 's|\\/|/|g; s|\\||g' | tr -d '\r\n ')
+if [[ -n "$UPLOAD_URL" && "$UPLOAD_URL" != https://* ]]; then
+  # falls Chat-Markdown https:// abgeschnitten hat, wieder hinzufügen
+  UPLOAD_URL="https://$UPLOAD_URL"
+  UPLOAD_URL="${UPLOAD_URL/https:\/\/https:\/\//https://}"
+fi
+# tmpfiles dl ohne https fixen
+if [[ "$UPLOAD_URL" == tmpfiles.org* ]]; then
+  UPLOAD_URL="https://$UPLOAD_URL"
+fi
 echo ""
 echo "══════════════════════════════════════"
 if [[ -n "$UPLOAD_URL" ]]; then
