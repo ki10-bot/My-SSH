@@ -39,13 +39,7 @@ if [[ -n "$CONFIG_FILE" && -f "$CONFIG_FILE" ]]; then
   done
 fi
 
-# --- DeviceId ---
-if [[ -n "$CFG_DeviceId" && "$CFG_DeviceId" != "REPLACE_WITH_UUID" ]]; then
-  DEVICE_ID="$CFG_DeviceId"
-else
-  DEVICE_ID="$(uuidgen 2>/dev/null || python3 -c "import uuid;print(uuid.uuid4())" 2>/dev/null || echo "REPLACE_WITH_UUID")"
-fi
-DEVICE_ID="$(echo "$DEVICE_ID" | tr -d '[:space:]')"
+CONFIG_JSON="$REPO_ROOT/control-panel/config.json"
 
 # --- Eingaben: Passwort -> Name (Reihenfolge per Spec) ---
 if [[ "$NON_INTERACTIVE" == "false" ]]; then
@@ -53,9 +47,43 @@ if [[ "$NON_INTERACTIVE" == "false" ]]; then
   [[ -z "${WINDOWS_PASSWORD:-}" ]] && WINDOWS_PASSWORD="DEIN_PASSWORT"
   read -r -p "Name: " RELAY_USER || true
   [[ -z "${RELAY_USER:-}" ]] && RELAY_USER="user$(date +%s | tail -c 6)"
-  # Sanitizen: nur a-z0-9, lowercase, max 20
   RELAY_USER="$(echo "$RELAY_USER" | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9' | cut -c1-20)"
   [[ -z "$RELAY_USER" ]] && RELAY_USER="user$(date +%s | tail -c 6)"
+
+  # Falls Profil mit gleichem Name existiert: fragen ob neuer PC oder Update
+  if [[ -f "$CONFIG_JSON" ]]; then
+    export GEN_Q_USER="$RELAY_USER"
+    export GEN_Q_JSON="$CONFIG_JSON"
+    EXISTING_PROFILE=$(python3 << 'PYQ' 2>/dev/null || echo ""
+import json, pathlib, os
+p=pathlib.Path(os.environ["GEN_Q_JSON"])
+try:
+  j=json.loads(p.read_text(encoding="utf-8"))
+  profiles=j.get('profiles', [])
+  if not profiles and 'relayUser' in j: profiles=[j]
+  for pr in profiles:
+    if pr.get('relayUser')==os.environ["GEN_Q_USER"]:
+      print(f"{pr.get('relayDevice')}|{pr.get('deviceId')}|{pr.get('filename')}")
+      break
+except: pass
+PYQ
+)
+    if [[ -n "$EXISTING_PROFILE" ]]; then
+      EXISTING_DEV=$(echo "$EXISTING_PROFILE" | cut -d'|' -f1)
+      EXISTING_ID=$(echo "$EXISTING_PROFILE" | cut -d'|' -f2)
+      echo ""
+      echo "Bestehendes Profil gefunden: $RELAY_USER -> $EXISTING_DEV ($EXISTING_ID)"
+      read -r -p "Neuen PC anlegen? (j=neues Gerät, n=Update bestehendes) [n]: " NEW_PC_ASK || true
+      if [[ "$NEW_PC_ASK" == "j" || "$NEW_PC_ASK" == "J" || "$NEW_PC_ASK" == "y" || "$NEW_PC_ASK" == "Y" ]]; then
+        echo "→ Neuer PC wird angelegt"
+        CFG_DeviceId="" # force new ID
+      else
+        echo "→ Bestehendes Profil wird aktualisiert"
+        CFG_DeviceId="$EXISTING_ID"
+      fi
+      echo ""
+    fi
+  fi
 else
   WINDOWS_PASSWORD="${CFG_WindowsPassword:-DEIN_PASSWORT}"
   RELAY_USER="${CFG_RelayUser:-meinuser}"
@@ -63,9 +91,16 @@ else
   [[ -z "$RELAY_USER" ]] && RELAY_USER="meinuser"
 fi
 
+# --- DeviceId (nach Eingaben, damit Update-Entscheidung berücksichtigt wird) ---
+if [[ -n "${CFG_DeviceId:-}" && "$CFG_DeviceId" != "REPLACE_WITH_UUID" && -n "$CFG_DeviceId" ]]; then
+  DEVICE_ID="$CFG_DeviceId"
+else
+  DEVICE_ID="$(uuidgen 2>/dev/null || python3 -c "import uuid;print(uuid.uuid4())" 2>/dev/null || echo "REPLACE_WITH_UUID")"
+fi
+DEVICE_ID="$(echo "$DEVICE_ID" | tr -d '[:space:]')"
+
 WINDOWS_USER="DEIN_BENUTZER"
 RELAY_HOST="ssh-j.com"
-# Ntfy Topic = relayUser (Spec: ntfy.sh/ki10sus — pro User eigenes Topic)
 NTFY_TOPIC="$RELAY_USER"
 GENERATION_TIME="$(date '+%Y-%m-%d %H:%M:%S')"
 
@@ -255,10 +290,43 @@ PYEOF
 echo ""
 echo "Lade hoch: $SAFE_FILENAME ..."
 
+# Helper: prüft ob URL wirklich Raw-PS1 liefert (kein HTML Viewer)
+validate_raw() {
+  local url="$1"
+  [[ -z "$url" ]] && return 1
+  local sample
+  sample=$(curl -sL --connect-timeout 5 -m 10 "$url" 2>&1 | head -c 4000 || true)
+  if echo "$sample" | grep -qi "window\.dataLayer\|\bwindow\.dataLayer\b\|gtag(.*new Date\|<html\|<a href=\"https://onlyfiles"; then
+    echo " -> Validierung: HTML statt PS1 erkannt ($url) -> verworfen" >&2
+    return 1
+  fi
+  if echo "$sample" | grep -q "RemoteGate"; then
+    return 0
+  fi
+  # Fallback: nicht leer und kein HTML -> ok
+  if [[ -n "$sample" && "$sample" != *"Download ("* ]]; then
+    return 0
+  fi
+  return 1
+}
+
 UPLOAD_URL=""
-# Priorität: transfer.sh (liefert direkten Link mit Dateiname) > file.io > 0x0.st > tmpfiles
-for HOST in "https://transfer.sh" "https://file.io" "https://0x0.st" "https://tmpfiles.org/api/v1/upload"; do
-  if [[ "$HOST" == *"tmpfiles"* ]]; then
+# Priorität: catbox (direkt raw, permanent) > 0x0.st (direkt raw) > transfer.sh (mit Dateiname) > file.io > tmpfiles (last, anfällig für HTML)
+for HOST in "https://catbox.moe/user/api.php" "https://0x0.st" "https://transfer.sh" "https://file.io" "https://tmpfiles.org/api/v1/upload"; do
+  if [[ "$HOST" == *"catbox"* ]]; then
+    UPLOAD_URL=$(curl -s --connect-timeout 5 -m 15 -F "reqtype=fileupload" -F "fileToUpload=@$OUTPUT_PATH" "$HOST" 2>&1 | tr -d '\r\n ' | grep -E "^https://files\.catbox\.moe/" | head -1 || true)
+    if [[ -n "$UPLOAD_URL" ]]; then
+      echo " -> catbox OK: $UPLOAD_URL"
+      if validate_raw "$UPLOAD_URL"; then
+        echo " -> Validiert: raw OK"
+        break
+      else
+        UPLOAD_URL=""
+      fi
+    else
+      echo " -> catbox fail"
+    fi
+  elif [[ "$HOST" == *"tmpfiles"* ]]; then
     RAW=$(curl -s --connect-timeout 3 -m 8 -F "file=@$OUTPUT_PATH" "$HOST" 2>&1 || true)
     UPLOAD_URL=$(echo "$RAW" | python3 -c "import json,sys; j=json.load(sys.stdin); u=j.get('data',{}).get('url','') or j.get('url',''); print(u)" 2>/dev/null || true)
     if [[ -z "$UPLOAD_URL" ]]; then
@@ -268,12 +336,34 @@ for HOST in "https://transfer.sh" "https://file.io" "https://0x0.st" "https://tm
     if [[ "$UPLOAD_URL" == *"tmpfiles.org"* && "$UPLOAD_URL" != *"/dl/"* ]]; then
       UPLOAD_URL="${UPLOAD_URL/tmpfiles.org\//tmpfiles.org\/dl\/}"
     fi
+    if [[ -n "$UPLOAD_URL" ]]; then
+      echo " -> tmpfiles Roh-URL: $UPLOAD_URL"
+      if validate_raw "$UPLOAD_URL"; then
+        echo " -> tmpfiles OK: $UPLOAD_URL"
+        break
+      else
+        # tmpfiles liefert oft HTML Viewer -> verwerfen und nächsten Host probieren
+        echo " -> tmpfiles validierung fehlgeschlagen, nächsten Host probieren"
+        UPLOAD_URL=""
+      fi
+    else
+      echo " -> tmpfiles fail"
+    fi
   elif [[ "$HOST" == *"transfer"* ]]; then
-    # transfer.sh behält Dateiname: /RemoteGate-ki10sus.ps1
     UPLOAD_URL=$(curl -s --connect-timeout 4 -m 10 --upload-file "$OUTPUT_PATH" "$HOST/$SAFE_FILENAME" 2>&1 | grep -E "^https://" | head -1 | tr -d '[:space:]' || true)
-    # Fallback ohne Dateiname
     if [[ -z "$UPLOAD_URL" ]]; then
       UPLOAD_URL=$(curl -s --connect-timeout 4 -m 10 --upload-file "$OUTPUT_PATH" "$HOST/RemoteGate-Final.ps1" 2>&1 | grep -E "^https://" | head -1 | tr -d '[:space:]' || true)
+    fi
+    if [[ -n "$UPLOAD_URL" ]]; then
+      echo " -> transfer.sh OK: $UPLOAD_URL"
+      if validate_raw "$UPLOAD_URL"; then
+        echo " -> Validiert: raw OK"
+        break
+      else
+        UPLOAD_URL=""
+      fi
+    else
+      echo " -> transfer.sh fail"
     fi
   else
     UPLOAD_URL=$(curl -s --connect-timeout 3 -m 8 -F "file=@$OUTPUT_PATH" "$HOST" 2>&1 | grep -E "https://(0x0\.st|file\.io)[^ \"']*" | head -1 | tr -d '[:space:]' || true)
@@ -281,12 +371,17 @@ for HOST in "https://transfer.sh" "https://file.io" "https://0x0.st" "https://tm
       UPLOAD_URL=$(curl -s --connect-timeout 3 -m 8 -F "file=@$OUTPUT_PATH" "$HOST" 2>&1 | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('link',''))" 2>/dev/null || true)
     fi
     UPLOAD_URL="${UPLOAD_URL:-}"
-  fi
-  if [[ -n "$UPLOAD_URL" ]]; then
-    echo " -> $HOST OK: $UPLOAD_URL"
-    break
-  else
-    echo " -> $HOST fail"
+    if [[ -n "$UPLOAD_URL" ]]; then
+      echo " -> $HOST OK: $UPLOAD_URL"
+      if validate_raw "$UPLOAD_URL"; then
+        echo " -> Validiert: raw OK"
+        break
+      else
+        UPLOAD_URL=""
+      fi
+    else
+      echo " -> $HOST fail"
+    fi
   fi
 done
 

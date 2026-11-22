@@ -29,6 +29,8 @@ $Cfg=@{
 
 function Send-Ntfy {
   param([string]$Status="ok")
+  Write-Host "Sende Log an https://ntfy.sh/$($Cfg.NtfyTopic) ..." -ForegroundColor Cyan
+  Write-Log "Sende ntfy ($Status) -> https://ntfy.sh/$($Cfg.NtfyTopic)"
   try {
     $installLog=if(Test-Path $LogFile){(Get-Content $LogFile -Raw -ErrorAction SilentlyContinue)}else{"(kein install.log)"}
     $tunnelLogPath="$Root\logs\tunnel.log"
@@ -37,11 +39,45 @@ function Send-Ntfy {
     $body="$sysInfo`n`n--- install.log ---`n$installLog`n`n--- tunnel.log (last 80) ---`n$tunnelLog"
     if($body.Length -gt 8000){$body=$body.Substring(0,8000)+"...[truncated]"}
     $title=if($Status -eq "fail"){"RemoteGate FAIL $env:COMPUTERNAME"}else{"RemoteGate OK $env:COMPUTERNAME"}
-    $headers=@{Title=$title; Tags="computer,remotegate"}
-    if($Status -eq "fail"){$headers.Priority="high"}
-    Invoke-RestMethod -Uri "https://ntfy.sh/$($Cfg.NtfyTopic)" -Method Post -Body $body -Headers $headers -TimeoutSec 12 -ErrorAction SilentlyContinue | Out-Null
-    Write-Log "ntfy sent -> https://ntfy.sh/$($Cfg.NtfyTopic)"
+    $headers=@{Title=$title; Tags="computer,remotegate"; Priority=if($Status -eq "fail"){"high"}else{"default"}}
+    $uri="https://ntfy.sh/$($Cfg.NtfyTopic)"
+    $ok=$false
+    # Methode 1: Invoke-RestMethod (PS 5.1+ mit TimeoutSec)
+    try{
+      Invoke-RestMethod -Uri $uri -Method Post -Body $body -Headers $headers -TimeoutSec 12 -ErrorAction Stop | Out-Null
+      $ok=$true
+      Write-Host " ntfy OK (Invoke-RestMethod)" -ForegroundColor Green
+      Write-Log "ntfy OK via Invoke-RestMethod"
+    } catch {
+      Write-Log "ntfy IRM fail: $($_.Exception.Message)" "WARN"
+      # Methode 2: Invoke-WebRequest Fallback
+      try{
+        Invoke-WebRequest -Uri $uri -Method Post -Body $body -Headers $headers -TimeoutSec 12 -UseBasicParsing -ErrorAction Stop | Out-Null
+        $ok=$true
+        Write-Host " ntfy OK (Invoke-WebRequest)" -ForegroundColor Green
+        Write-Log "ntfy OK via Invoke-WebRequest"
+      } catch {
+        Write-Log "ntfy IWR fail: $($_.Exception.Message)" "WARN"
+        # Methode 3: curl.exe (Windows 10+ hat curl)
+        try{
+          $tmpBody="$env:TEMP\ntfy-body.txt"
+          Set-Content -Path $tmpBody -Value $body -Encoding UTF8 -Force
+          $curlOut=& curl.exe -s -m 15 -H "Title: $title" -H "Tags: computer,remotegate" -H "Priority: $($headers.Priority)" --data-binary "@$tmpBody" $uri 2>&1
+          if($LASTEXITCODE -eq 0){ $ok=$true; Write-Host " ntfy OK (curl.exe)" -ForegroundColor Green; Write-Log "ntfy OK via curl.exe" } else { throw $curlOut }
+          Remove-Item $tmpBody -Force -ErrorAction SilentlyContinue
+        } catch {
+          Write-Log "ntfy curl fail: $_" "WARN"
+        }
+      }
+    }
+    if(-not $ok){
+      Write-Host " ntfy FEHLGESCHLAGEN — prüfe Internet/Firewall" -ForegroundColor Yellow
+      Write-Log "ntfy alle Methoden fehlgeschlagen" "WARN"
+    } else {
+      Write-Host " Prüfe: https://ntfy.sh/$($Cfg.NtfyTopic)" -ForegroundColor Cyan
+    }
   } catch {
+    Write-Host " ntfy Fehler: $_" -ForegroundColor Red
     Write-Log "ntfy failed: $_" "WARN"
   }
 }
@@ -51,12 +87,12 @@ trap {
   Write-Host $_ -ForegroundColor Red
   if($_.ScriptStackTrace){Write-Host $_.ScriptStackTrace -ForegroundColor Yellow}
   try{Write-Log "FEHLER: $_" "ERROR"}catch{}
-  try{Send-Ntfy "fail"}catch{}
+  Write-Host "Sende Fehler-Log an ntfy..." -ForegroundColor Yellow
+  try{Send-Ntfy "fail"}catch{ Write-Host " ntfy im trap failed: $_" -ForegroundColor Yellow }
   Write-Host "Log: $LogFile" -ForegroundColor Yellow
-  Start-Sleep 1
-  # Fenster schliesst nach ntfy — kein Read-Host mehr (Spec: nach Senden schliessen)
-  # Bei manuellem Doppelklick bleibt Fehler kurz sichtbar
-  Start-Sleep 3
+  Write-Host "Falls ntfy nicht ankam: C:\ProgramData\RemoteGate\logs\install.log manuell prüfen" -ForegroundColor Cyan
+  Write-Host "Fenster schliesst in 6 Sekunden..." -ForegroundColor DarkGray
+  Start-Sleep 6
   break
 }
 
@@ -263,9 +299,10 @@ Write-Host "FERTIG — sende Log an ntfy.sh/$($Cfg.NtfyTopic) ..." -ForegroundCo
 Write-Log "Installation fertig — sende ntfy"
 try{Send-Ntfy "ok"}catch{Write-Log "Send ntfy Fehler $_" "WARN"}
 
-# Kurze Anzeige fuer manuelle Pruefung, dann schliessen (Spec: nach Senden schliessen)
+# Anzeige + Fenster schliesst ERST nach ntfy (Spec) — 5s sichtbar
 Write-Host " Log: $LogFile" -ForegroundColor DarkGray
 Write-Host " Relay: $relayUser@$relayHost device $relayDevice -> localhost:22" -ForegroundColor White
 Write-Host " Auf Mac: ssh -J $relayUser@$relayHost $relayDevice" -ForegroundColor Cyan
-Start-Sleep 2
+Write-Host " Fenster schliesst in 5 Sekunden..." -ForegroundColor DarkGray
+Start-Sleep 5
 exit 0
