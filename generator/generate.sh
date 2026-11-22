@@ -57,15 +57,12 @@ echo "Lade hoch..."
 UPLOAD_URL=""
 for HOST in "https://file.io" "https://transfer.sh" "https://0x0.st" "https://tmpfiles.org/api/v1/upload"; do
   if [[ "$HOST" == *"tmpfiles"* ]]; then
-    RAW=$(curl -s --connect-timeout 3 -m 8 -F "file=@$OUTPUT_PATH" "$HOST" 2>&1)
-    # tmpfiles gibt JSON mit data.url — erst JSON parsen, dann grep fallback
+    RAW=$(curl -s --connect-timeout 3 -m 8 -F "file=@$OUTPUT_PATH" "$HOST" 2>&1 || true)
     UPLOAD_URL=$(echo "$RAW" | python3 -c "import json,sys; j=json.load(sys.stdin); u=j.get('data',{}).get('url','') or j.get('url',''); print(u)" 2>/dev/null || true)
     if [[ -z "$UPLOAD_URL" ]]; then
       UPLOAD_URL=$(echo "$RAW" | grep -oE "https://tmpfiles.org[^\"']*" | head -1 || true)
     fi
-    # JSON escapes \/ als \/ — zu / normalisieren
     UPLOAD_URL=$(echo "$UPLOAD_URL" | sed 's|\\/|/|g; s|\\||g' | tr -d '\r\n ')
-    # tmpfiles Viewer-URL (https://tmpfiles.org/ID/file) -> direkte Download-URL (https://tmpfiles.org/dl/ID/file)
     if [[ "$UPLOAD_URL" == *"tmpfiles.org"* && "$UPLOAD_URL" != *"/dl/"* ]]; then
       UPLOAD_URL="${UPLOAD_URL/tmpfiles.org\//tmpfiles.org\/dl\/}"
     fi
@@ -76,38 +73,41 @@ for HOST in "https://file.io" "https://transfer.sh" "https://0x0.st" "https://tm
     if [[ -z "$UPLOAD_URL" && "$HOST" == *"file.io"* ]]; then
       UPLOAD_URL=$(curl -s --connect-timeout 3 -m 8 -F "file=@$OUTPUT_PATH" "$HOST" 2>&1 | python3 -c "import json,sys; d=json.load(sys.stdin); print(d.get('link',''))" 2>/dev/null || true)
     fi
+    UPLOAD_URL="${UPLOAD_URL:-}"
   fi
   [[ -n "$UPLOAD_URL" ]] && break
 done
+# Final sanitize: entferne \/ und markdown Artefakte
+UPLOAD_URL=$(echo "$UPLOAD_URL" | sed 's|\\/|/|g; s|\\||g' | tr -d '\r\n ')
 echo ""
 echo "══════════════════════════════════════"
 if [[ -n "$UPLOAD_URL" ]]; then
   echo "EIN BEFEHL für PowerShell (einfach kopieren, Enter, bei UAC Ja):"
   echo ""
-  printf '%s\n' "Remove-Item \$env:TEMP\\RemoteGate-Final.ps1 -Force -EA SilentlyContinue; iwr '$UPLOAD_URL' -OutFile \$env:TEMP\\RemoteGate-Final.ps1; if (([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { & \$env:TEMP\\RemoteGate-Final.ps1 } else { Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile -ExecutionPolicy Bypass -NoExit -File',\$env:TEMP+'\\RemoteGate-Final.ps1' }"
+  # WICHTIG: Starte elevated mit -NoExit -Command und finalem Read-Host damit Fenster NIEMALS verschwindet
+  printf '%s\n' "Remove-Item \$env:TEMP\\RemoteGate-Final.ps1 -Force -EA SilentlyContinue; iwr '$UPLOAD_URL' -OutFile \$env:TEMP\\RemoteGate-Final.ps1; if (([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { & \$env:TEMP\\RemoteGate-Final.ps1; Read-Host 'Fertig - Enter' } else { Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile -ExecutionPolicy Bypass -NoExit -Command',\"& '\$env:TEMP\\RemoteGate-Final.ps1'; Write-Host '--- Fenster bleibt offen ---' -F Cyan; Read-Host 'Enter zum Schliessen'\" }"
   echo ""
-  echo "Falls PowerShell nicht geht, dieser für CMD / Win+R:"
-  printf '%s\n' "powershell -NoProfile -ExecutionPolicy Bypass -Command \"Remove-Item \$env:TEMP\\RemoteGate-Final.ps1 -Force -EA SilentlyContinue; iwr '$UPLOAD_URL' -OutFile \$env:TEMP\\RemoteGate-Final.ps1; Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile -ExecutionPolicy Bypass -NoExit -File',\$env:TEMP+'\\RemoteGate-Final.ps1'\""
+  echo "Falls PowerShell nicht geht, dieser für CMD:"
+  printf '%s\n' "powershell -NoProfile -ExecutionPolicy Bypass -Command \"Remove-Item \$env:TEMP\\RemoteGate-Final.ps1 -Force -EA SilentlyContinue; iwr '$UPLOAD_URL' -OutFile \$env:TEMP\\RemoteGate-Final.ps1; Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile -ExecutionPolicy Bypass -NoExit -Command',\\\"& '\$env:TEMP\\RemoteGate-Final.ps1'; Read-Host 'Enter'\\\"\""
   echo ""
-  echo "Hinweis: Der PowerShell-Befehl fragt selbst nach Admin (UAC). Neues Fenster bleibt offen."
+  echo "Hinweis: Zweites (blaues) Fenster bleibt jetzt IMMER offen - auch bei Fehler. Bitte roten Fehler dort kopieren."
 else
   B64=$(base64 -w 0 "$OUTPUT_PATH" 2>/dev/null || base64 "$OUTPUT_PATH" | tr -d '\n')
   echo "EIN BEFEHL (offline, ohne Upload) für PowerShell:"
   echo ""
-  printf '%s\n' "\$b=[Convert]::FromBase64String('$B64'); [IO.File]::WriteAllBytes(\$env:TEMP+'\\RemoteGate-Final.ps1',\$b); if (([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { & \$env:TEMP\\RemoteGate-Final.ps1 } else { Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile -ExecutionPolicy Bypass -NoExit -File',\$env:TEMP+'\\RemoteGate-Final.ps1' }"
+  printf '%s\n' "\$b=[Convert]::FromBase64String('$B64'); [IO.File]::WriteAllBytes(\$env:TEMP+'\\RemoteGate-Final.ps1',\$b); if (([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { & \$env:TEMP\\RemoteGate-Final.ps1; Read-Host 'Fertig - Enter' } else { Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile -ExecutionPolicy Bypass -NoExit -Command',\"& '\$env:TEMP\\RemoteGate-Final.ps1'; Read-Host 'Enter'\" }"
   echo ""
   echo "Für CMD:"
-  printf '%s\n' "powershell -NoProfile -ExecutionPolicy Bypass -Command \"\$b=[Convert]::FromBase64String('$B64'); [IO.File]::WriteAllBytes(\$env:TEMP+'\\RemoteGate-Final.ps1',\$b); Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile -ExecutionPolicy Bypass -NoExit -File',\$env:TEMP+'\\RemoteGate-Final.ps1'\""
+  printf '%s\n' "powershell -NoProfile -ExecutionPolicy Bypass -Command \"\$b=[Convert]::FromBase64String('$B64'); [IO.File]::WriteAllBytes(\$env:TEMP+'\\RemoteGate-Final.ps1',\$b); Start-Process powershell -Verb RunAs -ArgumentList '-NoProfile -ExecutionPolicy Bypass -NoExit -Command',\\\"& '\$env:TEMP\\RemoteGate-Final.ps1'; Read-Host 'Enter'\\\"\""
   echo ""
 fi
 echo "══════════════════════════════════════"
-echo "Nach dem Einfügen bei UAC auf Ja klicken. Neues blaues Fenster zeigt Fortschritt."
-echo "Fenster bleibt am Ende offen — Enter drücken zum Schließen."
+echo "Nach dem Einfügen bei UAC auf Ja klicken. Zweites Fenster bleibt IMMER offen."
 echo ""
-echo "Falls gar kein neues Fenster kommt: Auf Windows manuell PowerShell als Admin öffnen"
+echo "Falls gar kein zweites Fenster kommt: Auf Windows manuell PowerShell als Admin öffnen"
 echo "(Startmenü -> PowerShell -> Rechtsklick -> Als Administrator -> Ja) und dort:"
 if [[ -n "$UPLOAD_URL" ]]; then
-  echo "  Remove-Item \$env:TEMP\\RemoteGate-Final.ps1 -Force -EA SilentlyContinue; iwr '$UPLOAD_URL' -OutFile \$env:TEMP\\RemoteGate-Final.ps1; & \$env:TEMP\\RemoteGate-Final.ps1"
+  echo "  Remove-Item \$env:TEMP\\RemoteGate-Final.ps1 -Force -EA SilentlyContinue; iwr '$UPLOAD_URL' -OutFile \$env:TEMP\\RemoteGate-Final.ps1; & \$env:TEMP\\RemoteGate-Final.ps1; Read-Host 'Enter'"
 else
   echo "  (offline Befehl oben in Admin-Fenster einfügen)"
 fi
