@@ -63,6 +63,8 @@ for HOST in "https://file.io" "https://transfer.sh" "https://0x0.st" "https://tm
     if [[ -z "$UPLOAD_URL" ]]; then
       UPLOAD_URL=$(echo "$RAW" | grep -oE "https://tmpfiles.org[^\"']*" | head -1 || true)
     fi
+    # JSON escapes \/ als \/ — zu / normalisieren
+    UPLOAD_URL=$(echo "$UPLOAD_URL" | sed 's|\\/|/|g; s|\\||g' | tr -d '\r\n ')
     # tmpfiles Viewer-URL (https://tmpfiles.org/ID/file) -> direkte Download-URL (https://tmpfiles.org/dl/ID/file)
     if [[ "$UPLOAD_URL" == *"tmpfiles.org"* && "$UPLOAD_URL" != *"/dl/"* ]]; then
       UPLOAD_URL="${UPLOAD_URL/tmpfiles.org\//tmpfiles.org\/dl\/}"
