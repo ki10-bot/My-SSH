@@ -90,7 +90,23 @@ if [[ "$UPLOAD_URL" == tmpfiles.org* ]]; then
 fi
 echo ""
 echo "══════════════════════════════════════"
-B64_OFFLINE=$(base64 -w 0 "$OUTPUT_PATH" 2>/dev/null | base64 "$OUTPUT_PATH" | tr -d '\n')
+# Portable base64: GNU -w 0, BSD -b 0, fallback openssl / stdin
+B64_OFFLINE=""
+if command -v base64 >/dev/null 2>&1; then
+  B64_OFFLINE=$(base64 -w 0 "$OUTPUT_PATH" 2>/dev/null | tr -d '\n' || true)
+  if [[ -z "$B64_OFFLINE" ]]; then
+    B64_OFFLINE=$(base64 -b 0 -i "$OUTPUT_PATH" 2>/dev/null | tr -d '\n' || true)
+  fi
+  if [[ -z "$B64_OFFLINE" ]]; then
+    B64_OFFLINE=$(base64 < "$OUTPUT_PATH" 2>/dev/null | tr -d ' \n\r' || true)
+  fi
+  if [[ -z "$B64_OFFLINE" ]]; then
+    B64_OFFLINE=$(openssl base64 -A -in "$OUTPUT_PATH" 2>/dev/null | tr -d '\n' || true)
+  fi
+fi
+if [[ -z "$B64_OFFLINE" ]]; then
+  echo "WARN: base64 fehlgeschlagen - offline Befehl nicht verfügbar, nutze Online-Link"
+fi
 if [[ -n "$UPLOAD_URL" ]]; then
   echo "EIN BEFEHL für PowerShell (einfach kopieren, Enter, bei UAC Ja) - KURZ, bricht nicht um:"
   echo ""
